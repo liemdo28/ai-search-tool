@@ -2,27 +2,42 @@
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
-<title>My Tool</title>
+<title>AI Search Tool</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+
 <style>
 body{
 font-family: Arial;
 text-align:center;
 background:#f5f5f5;
-margin-top:100px;
+margin-top:80px;
 }
+
 .box{
 background:white;
 padding:40px;
 border-radius:10px;
-width:300px;
+width:400px;
 margin:auto;
 box-shadow:0 5px 20px rgba(0,0,0,0.1);
 }
+
+input{
+width:80%;
+padding:10px;
+font-size:16px;
+margin-bottom:10px;
+}
+
 button{
 padding:10px 20px;
 font-size:16px;
 cursor:pointer;
+}
+
+#result{
+margin-top:20px;
+text-align:left;
 }
 </style>
 </head>
@@ -30,14 +45,68 @@ cursor:pointer;
 <body>
 
 <div class="box">
-<h2>My Tool</h2>
-<p>Tool đã chạy thành công</p>
 
-<button onclick="alert('Hello from your tool!')">
-Test Tool
-</button>
+<h2>AI Search Tool</h2>
+
+<input id="query" placeholder="Nhập câu hỏi..." />
+
+<br>
+
+<button onclick="runSearch()">Search</button>
+
+<div id="result"></div>
 
 </div>
+
+<script>
+
+async function runSearch(){
+
+const q = document.getElementById("query").value
+
+if(!q){
+alert("Nhập câu hỏi trước")
+return
+}
+
+document.getElementById("result").innerHTML="Đang tìm..."
+
+try{
+
+const res = await fetch("/api/run",{
+method:"POST",
+headers:{
+"Content-Type":"application/json"
+},
+body:JSON.stringify({query:q})
+})
+
+const data = await res.json()
+
+let html = "<h3>Answer</h3>"
+html += "<p>"+data.answer+"</p>"
+
+html += "<h4>Sources</h4><ul>"
+
+data.sources.forEach(s=>{
+html += `<li><a href="${s}" target="_blank">${s}</a></li>`
+})
+
+html += "</ul>"
+
+document.getElementById("result").innerHTML = html
+
+}
+catch(e){
+
+document.getElementById("result").innerHTML =
+"API lỗi: "+e
+
+}
+
+}
+
+</script>
 
 </body>
 </html>
