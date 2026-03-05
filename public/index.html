@@ -81,7 +81,20 @@ headers:{
 body:JSON.stringify({query:q})
 })
 
-const data = await res.json()
+const text = await res.text();
+let data;
+try {
+  data = JSON.parse(text);
+} catch (e) {
+  document.getElementById("result").innerText =
+    "API trả về không phải JSON:\n\n" + text.slice(0, 400);
+  return;
+}
+if (!res.ok || data.ok === false) {
+  document.getElementById("result").innerText =
+    "API lỗi:\n\n" + JSON.stringify(data, null, 2);
+  return;
+}
 
 let html = "<h3>Answer</h3>"
 html += "<p>"+data.answer+"</p>"
