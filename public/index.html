@@ -101,10 +101,17 @@ html += "<p>"+data.answer+"</p>"
 
 html += "<h4>Sources</h4><ul>"
 
-data.sources.forEach(s=>{
-html += `<li><a href="${s}" target="_blank">${s}</a></li>`
-})
+const sources = Array.isArray(data.sources) ? data.sources : [];
 
+if (sources.length === 0) {
+  html += "<p><i>(Không có sources)</i></p>";
+} else {
+  html += "<h4>Sources</h4><ul>";
+  sources.forEach(s => {
+    html += `<li><a href="${s}" target="_blank" rel="noopener noreferrer">${s}</a></li>`;
+  });
+  html += "</ul>";
+}
 html += "</ul>"
 
 document.getElementById("result").innerHTML = html
