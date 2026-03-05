@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: ai-search-summarizer
+    env: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r backend_proxy/requirements.txt
+    startCommand: uvicorn backend_proxy.server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
