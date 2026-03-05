@@ -1,44 +1,34 @@
-export async function onRequestPost(context) {
+export async function onRequestPost({ request, env }) {
+  try {
+    const body = await request.json().catch(() => ({}));
+    const query = (body.query || "").toString().trim();
 
-  const { request } = context
-  const body = await request.json()
-  const query = body.query
+    if (!query) {
+      return json({ ok: false, error: "Missing 'query' in request body" }, 400);
+    }
 
-  // call SerpAPI
-  const serp = await fetch(
-    `https://serpapi.com/search.json?q=${encodeURIComponent(query)}&api_key=${SERPAPI_API_KEY}`
-  )
+    // Debug: show env presence only (no secrets)
+    return json({
+      ok: true,
+      query,
+      env: {
+        OPENAI_API_KEY: env.OPENAI_API_KEY ? "SET" : "MISSING",
+        SERPAPI_API_KEY: env.SERPAPI_API_KEY ? "SET" : "MISSING",
+      },
+      answer: "API /api/run OK (stub). Next step: wire SerpAPI + OpenAI.",
+      sources: [],
+    });
+  } catch (err) {
+    return json(
+      { ok: false, error: String(err?.message || err), stack: String(err?.stack || "") },
+      500
+    );
+  }
+}
 
-  const serpData = await serp.json()
-
-  const results = serpData.organic_results.slice(0,3)
-
-  const urls = results.map(r => r.link)
-
-  const content = urls.join("\n")
-
-  // call OpenAI
-  const ai = await fetch("https://api.openai.com/v1/chat/completions",{
-    method:"POST",
-    headers:{
-      "Content-Type":"application/json",
-      "Authorization":`Bearer ${OPENAI_API_KEY}`
-    },
-    body:JSON.stringify({
-      model:"gpt-4o-mini",
-      messages:[
-        {role:"system",content:"Answer the question using the sources."},
-        {role:"user",content:`Question: ${query}\nSources:\n${content}`}
-      ]
-    })
-  })
-
-  const aiData = await ai.json()
-
-  return new Response(JSON.stringify({
-    answer: aiData.choices[0].message.content,
-    sources: urls
-  }),{
-    headers:{ "content-type":"application/json" }
-  })
+function json(obj, status = 200) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { "content-type": "application/json; charset=utf-8" },
+  });
 }
