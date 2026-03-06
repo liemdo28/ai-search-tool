@@ -4,129 +4,397 @@
 <meta charset="UTF-8">
 <title>AI Search Tool</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-
 <style>
-body{
-font-family: Arial;
-text-align:center;
-background:#f5f5f5;
-margin-top:80px;
+:root {
+  --cyan:   #00f5ff;
+  --pink:   #ff00ff;
+  --green:  #39ff14;
+  --yellow: #ffe000;
+  --bg:     #07070f;
+  --bg2:    rgba(0,245,255,.04);
+  --border: rgba(0,245,255,.18);
+  --text:   #dde4f0;
 }
 
-.box{
-background:white;
-padding:40px;
-border-radius:10px;
-width:400px;
-margin:auto;
-box-shadow:0 5px 20px rgba(0,0,0,0.1);
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  padding: 0 16px 80px;
+  background-image:
+    radial-gradient(ellipse 80% 40% at 50% -10%, rgba(0,245,255,.08) 0%, transparent 70%),
+    radial-gradient(ellipse 60% 30% at 80% 110%, rgba(255,0,255,.06) 0%, transparent 60%);
 }
 
-input{
-width:80%;
-padding:10px;
-font-size:16px;
-margin-bottom:10px;
+/* ─── HEADER ─── */
+header {
+  text-align: center;
+  padding: 48px 0 36px;
+}
+header h1 {
+  font-size: clamp(1.8rem, 5vw, 2.8rem);
+  font-weight: 900;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  color: var(--cyan);
+  text-shadow: 0 0 20px var(--cyan), 0 0 60px rgba(0,245,255,.3), 0 0 120px rgba(0,245,255,.12);
+}
+.header-sub {
+  margin-top: 10px;
+  color: rgba(255,255,255,.4);
+  font-size: .88rem;
+  letter-spacing: 1px;
 }
 
-button{
-padding:10px 20px;
-font-size:16px;
-cursor:pointer;
+/* ─── SEARCH CARD ─── */
+.search-card {
+  max-width: 780px;
+  margin: 0 auto 32px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 28px 28px 24px;
+  box-shadow: 0 0 60px rgba(0,245,255,.06);
+}
+.row { display: flex; gap: 12px; flex-wrap: wrap; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field.grow   { flex: 1 1 260px; }
+.field.shrink { flex: 0 0 150px; }
+
+label {
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--cyan);
 }
 
-#result{
-margin-top:20px;
-text-align:left;
+input[type=text], input[type=number] {
+  background: rgba(0,0,0,.45);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+  color: #fff;
+  font-size: 1rem;
+  outline: none;
+  width: 100%;
+  transition: border-color .2s, box-shadow .2s;
+}
+input[type=text]:focus, input[type=number]:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 14px rgba(0,245,255,.28);
+}
+input::placeholder { color: rgba(255,255,255,.3); }
+input[type=number]::-webkit-inner-spin-button { opacity: .5; }
+
+.search-btn {
+  margin-top: 18px;
+  width: 100%;
+  padding: 15px;
+  background: transparent;
+  border: 2px solid var(--cyan);
+  border-radius: 10px;
+  color: var(--cyan);
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background .2s, box-shadow .2s, transform .1s;
+}
+.search-btn:hover:not(:disabled) {
+  background: rgba(0,245,255,.1);
+  box-shadow: 0 0 30px rgba(0,245,255,.4), inset 0 0 20px rgba(0,245,255,.06);
+}
+.search-btn:active:not(:disabled) { transform: scale(.98); }
+.search-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+/* ─── LOADING ─── */
+.loading {
+  display: none;
+  text-align: center;
+  padding: 60px 20px;
+}
+.spinner {
+  width: 52px; height: 52px;
+  border: 3px solid rgba(0,245,255,.15);
+  border-top-color: var(--cyan);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+  margin: 0 auto 20px;
+  box-shadow: 0 0 20px rgba(0,245,255,.3);
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.load-main { color: var(--cyan); font-size: .95rem; animation: blink 1.4s ease-in-out infinite; }
+@keyframes blink { 0%,100%{opacity:.5} 50%{opacity:1} }
+.load-sub  { margin-top: 8px; font-size: .75rem; color: rgba(255,255,255,.28); letter-spacing: 1px; }
+
+/* ─── RESULTS ─── */
+#results { max-width: 1120px; margin: 0 auto; }
+
+.stats-row {
+  display: flex; gap: 28px; flex-wrap: wrap;
+  margin-bottom: 22px; padding: 0 2px;
+}
+.stat { display: flex; flex-direction: column; gap: 2px; }
+.stat-val { font-size: 1.6rem; font-weight: 800; line-height: 1; }
+.c-green { color: var(--green); text-shadow: 0 0 12px rgba(57,255,20,.5); }
+.c-cyan  { color: var(--cyan);  text-shadow: 0 0 12px rgba(0,245,255,.5); }
+.c-pink  { color: var(--pink);  text-shadow: 0 0 12px rgba(255,0,255,.5); }
+.stat-lbl { font-size: .68rem; text-transform: uppercase; letter-spacing: 1px; color: rgba(255,255,255,.35); }
+
+.card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 24px;
+  margin-bottom: 18px;
+}
+
+.sec-label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: .7rem; text-transform: uppercase; letter-spacing: 2px;
+  margin-bottom: 16px;
+}
+.dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.dot-pink  { background: var(--pink);  box-shadow: 0 0 8px var(--pink); }
+.dot-cyan  { background: var(--cyan);  box-shadow: 0 0 8px var(--cyan); }
+.dot-green { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.lbl-pink  { color: var(--pink); }
+.lbl-cyan  { color: var(--cyan); }
+.lbl-green { color: var(--green); }
+
+/* TABLE */
+.tbl-wrap { overflow-x: auto; border-radius: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+thead tr {
+  background: rgba(0,245,255,.07);
+  border-bottom: 1px solid rgba(0,245,255,.25);
+}
+th {
+  padding: 13px 16px; text-align: left;
+  font-size: .68rem; text-transform: uppercase;
+  letter-spacing: 1.5px; color: var(--cyan);
+  white-space: nowrap; font-weight: 700;
+}
+tbody tr { border-bottom: 1px solid rgba(255,255,255,.05); transition: background .15s; }
+tbody tr:hover { background: rgba(0,245,255,.05); }
+tbody tr:last-child { border-bottom: none; }
+td { padding: 14px 16px; color: rgba(255,255,255,.82); vertical-align: top; }
+
+.rank {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 50%;
+  background: rgba(0,245,255,.12); border: 1px solid rgba(0,245,255,.3);
+  font-size: .72rem; font-weight: 700; color: var(--cyan);
+}
+td a {
+  color: var(--cyan); text-decoration: none;
+  font-size: .82rem; transition: text-shadow .2s;
+}
+td a:hover { text-shadow: 0 0 10px var(--cyan); }
+
+/* SUMMARY */
+.summary-body { line-height: 1.75; color: rgba(255,255,255,.8); font-size: .95rem; }
+
+/* SOURCES */
+.sources-list { display: flex; flex-direction: column; gap: 8px; }
+.src-row {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 10px 14px;
+  background: rgba(0,0,0,.3);
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.05);
+  transition: border-color .2s;
+}
+.src-row:hover { border-color: rgba(0,245,255,.2); }
+.src-num { font-size: .72rem; font-weight: 800; color: var(--green); min-width: 26px; padding-top: 1px; }
+.src-title { font-size: .85rem; color: rgba(255,255,255,.85); margin-bottom: 3px; }
+.src-link { font-size: .76rem; color: var(--cyan); text-decoration: none; word-break: break-all; opacity: .8; }
+.src-link:hover { opacity: 1; text-shadow: 0 0 8px var(--cyan); }
+
+/* ERROR */
+.err-box {
+  background: rgba(255,30,80,.08); border: 1px solid rgba(255,30,80,.35);
+  border-radius: 14px; padding: 22px 24px; color: #ff6b9d;
+}
+.err-box pre { margin-top: 10px; font-size: .8rem; white-space: pre-wrap; word-break: break-all; color: rgba(255,107,157,.75); }
+
+@media (max-width: 580px) {
+  .field.shrink { flex: 0 0 100%; }
+  .search-card  { padding: 20px 16px; }
+  .card         { padding: 18px 14px; }
 }
 </style>
 </head>
-
 <body>
 
-<div class="box">
+<header>
+  <h1>⚡ AI Search</h1>
+  <p class="header-sub">Thu thập · Phân tích · Tổng hợp thông minh từ nhiều nguồn</p>
+</header>
 
-<h2>AI Search Tool</h2>
-
-<input id="query" placeholder="Nhập câu hỏi..." />
-
-<br>
-
-<button onclick="runSearch()">Search</button>
-
-<div id="result"></div>
-
+<div class="search-card">
+  <div class="row">
+    <div class="field grow">
+      <label for="query">Câu hỏi / Từ khóa</label>
+      <input type="text" id="query"
+        placeholder='Ví dụ: "top 5 trường tiểu học học phí rẻ nhất HCM"' />
+    </div>
+    <div class="field shrink">
+      <label for="nsrc">Số nguồn (1–10)</label>
+      <input type="number" id="nsrc" value="5" min="1" max="10" />
+    </div>
+  </div>
+  <button class="search-btn" id="runBtn" onclick="runSearch()">🔍 &nbsp;Tìm kiếm</button>
 </div>
 
+<div class="loading" id="loading">
+  <div class="spinner"></div>
+  <div class="load-main" id="loadMain">Đang tìm kiếm...</div>
+  <div class="load-sub"  id="loadSub"></div>
+</div>
+
+<div id="results"></div>
+
 <script>
+const STEPS = [
+  ["Đang gửi truy vấn đến Google...",        "Kết nối SerpAPI"],
+  ["Đang thu thập kết quả từ các nguồn...", "Phân tích nội dung"],
+  ["AI đang xử lý & tổng hợp dữ liệu...",  "GPT-4 đang làm việc"],
+  ["Đang tạo bảng thống kê...",             "Sắp xong rồi..."],
+];
+let _st = null;
 
-async function runSearch(){
-
-const q = document.getElementById("query").value
-
-if(!q){
-alert("Nhập câu hỏi trước")
-return
+function startSteps() {
+  let i = 0;
+  document.getElementById("loadMain").textContent = STEPS[0][0];
+  document.getElementById("loadSub").textContent  = STEPS[0][1];
+  _st = setInterval(() => {
+    i = (i + 1) % STEPS.length;
+    document.getElementById("loadMain").textContent = STEPS[i][0];
+    document.getElementById("loadSub").textContent  = STEPS[i][1];
+  }, 1800);
+}
+function stopSteps() {
+  clearInterval(_st);
+  document.getElementById("loading").style.display = "none";
 }
 
-document.getElementById("result").innerHTML="Đang tìm..."
+async function runSearch() {
+  const query = document.getElementById("query").value.trim();
+  const nsrc  = parseInt(document.getElementById("nsrc").value, 10) || 5;
+  if (!query) { alert("Vui lòng nhập câu hỏi!"); return; }
 
-try{
+  document.getElementById("results").innerHTML = "";
+  document.getElementById("loading").style.display = "block";
+  document.getElementById("runBtn").disabled = true;
+  startSteps();
 
-const res = await fetch("/api/run",{
-method:"POST",
-headers:{
-"Content-Type":"application/json"
-},
-body:JSON.stringify({query:q})
-})
+  try {
+    const res = await fetch("/api/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, n_sources: nsrc }),
+    });
 
-const text = await res.text();
-let data;
-try {
-  data = JSON.parse(text);
-} catch (e) {
-  document.getElementById("result").innerText =
-    "API trả về không phải JSON:\n\n" + text.slice(0, 400);
-  return;
+    stopSteps();
+    document.getElementById("runBtn").disabled = false;
+
+    const txt = await res.text();
+    let data;
+    try { data = JSON.parse(txt); }
+    catch { showErr("API trả về không hợp lệ:\n" + txt.slice(0, 400)); return; }
+
+    if (!res.ok || data.ok === false) { showErr(JSON.stringify(data, null, 2)); return; }
+    render(data, nsrc);
+  } catch (e) {
+    stopSteps();
+    document.getElementById("runBtn").disabled = false;
+    showErr("Lỗi kết nối: " + e.message);
+  }
 }
-if (!res.ok || data.ok === false) {
-  document.getElementById("result").innerText =
-    "API lỗi:\n\n" + JSON.stringify(data, null, 2);
-  return;
+
+function render(data, nsrc) {
+  const el      = document.getElementById("results");
+  const sources = (data.meta && data.meta.results) ? data.meta.results : [];
+  const rows    = Array.isArray(data.table_data) ? data.table_data : [];
+  const cols    = Array.isArray(data.columns) && data.columns.length ? data.columns : [];
+  const summary = data.summary || data.answer || "";
+
+  let h = "";
+
+  /* Stats bar */
+  h += `<div class="stats-row">
+    <div class="stat"><span class="stat-val c-green">${sources.length}</span><span class="stat-lbl">Nguồn tìm thấy</span></div>`;
+  if (rows.length)
+    h += `<div class="stat"><span class="stat-val c-cyan">${rows.length}</span><span class="stat-lbl">Kết quả</span></div>`;
+  h += `<div class="stat"><span class="stat-val c-pink">${nsrc}</span><span class="stat-lbl">Nguồn yêu cầu</span></div></div>`;
+
+  /* Table */
+  if (rows.length && cols.length) {
+    h += `<div class="card">
+      <div class="sec-label"><span class="dot dot-cyan"></span><span class="lbl-cyan">Bảng thống kê kết quả</span></div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>#</th>${cols.map(c => `<th>${x(c)}</th>`).join("")}</tr></thead>
+        <tbody>${rows.map((row, i) => `<tr>
+          <td><span class="rank">${i + 1}</span></td>
+          ${cols.map(c => {
+            const v = row[c] ?? "";
+            const isLink = c.toLowerCase().includes("link") || c.toLowerCase().includes("url") || String(v).startsWith("http");
+            return isLink && v
+              ? `<td><a href="${x(v)}" target="_blank" rel="noopener noreferrer">↗ Xem nguồn</a></td>`
+              : `<td>${x(String(v))}</td>`;
+          }).join("")}
+        </tr>`).join("")}</tbody>
+      </table></div>
+    </div>`;
+  }
+
+  /* Summary */
+  if (summary) {
+    h += `<div class="card">
+      <div class="sec-label"><span class="dot dot-pink"></span><span class="lbl-pink">Tóm tắt AI</span></div>
+      <div class="summary-body">${x(summary).replace(/\n/g, "<br>")}</div>
+    </div>`;
+  }
+
+  /* Sources */
+  if (sources.length) {
+    h += `<div class="card">
+      <div class="sec-label"><span class="dot dot-green"></span><span class="lbl-green">Nguồn tham khảo (${sources.length})</span></div>
+      <div class="sources-list">${sources.map((s, i) => `
+        <div class="src-row">
+          <span class="src-num">[${i + 1}]</span>
+          <div>
+            <div class="src-title">${x(s.title || "(không có tiêu đề)")}</div>
+            <a class="src-link" href="${x(s.link)}" target="_blank" rel="noopener noreferrer">${x(s.link)}</a>
+          </div>
+        </div>`).join("")}
+      </div>
+    </div>`;
+  }
+
+  el.innerHTML = h;
 }
 
-let html = "<h3>Answer</h3>"
-html += "<p>"+data.answer+"</p>"
+function showErr(msg) {
+  document.getElementById("results").innerHTML =
+    `<div class="err-box"><strong>⚠ Lỗi</strong><pre>${x(msg)}</pre></div>`;
+}
 
-html += "<h4>Sources</h4><ul>"
+/* XSS-safe escaper */
+function x(s) {
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
 
-const sources = Array.isArray(data.sources) ? data.sources : [];
-
-if (sources.length === 0) {
-  html += "<p><i>(Không có sources)</i></p>";
-} else {
-  html += "<h4>Sources</h4><ul>";
-  sources.forEach(s => {
-    html += `<li><a href="${s}" target="_blank" rel="noopener noreferrer">${s}</a></li>`;
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("query").addEventListener("keydown", e => {
+    if (e.key === "Enter") runSearch();
   });
-  html += "</ul>";
-}
-html += "</ul>"
-
-document.getElementById("result").innerHTML = html
-
-}
-catch(e){
-
-document.getElementById("result").innerHTML =
-"API lỗi: "+e
-
-}
-
-}
-
+});
 </script>
-
 </body>
 </html>
