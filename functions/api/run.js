@@ -576,7 +576,7 @@ function fallbackRowsFromSources(columns, topK, sources, query, queryType) {
         hint.includes("tên trường") ||
         /\btruong\b/.test(stripVietnamese(hint))
       ) {
-        row[col.key] = schoolName;
+        row[col.key] = rankingSchoolQuery ? "" : schoolName;
         continue;
       }
       if (hint.includes("item") || hint.includes("muc") || hint.includes("model")) {
@@ -635,20 +635,20 @@ function fallbackRowsFromSources(columns, topK, sources, query, queryType) {
       let school =
         cleanString(row.school_name || row.ten_truong || row["tên trường"] || "");
 
-      if (school && schoolCol) {
-        if (!schoolRowMatchesQuery(row, src, schoolLocationHints, query)) {
-          school = "";
-        }
-      }
-
-      if (school) {
-        const key = schoolDedupKey(school);
-        if (key && !seenSchoolKeys.has(key)) {
-          seenSchoolKeys.add(key);
-          rows.push(row);
-        }
-      } else if (rankingSchoolQuery && schoolCol && schoolCandidates.length > 0) {
+      if (rankingSchoolQuery && schoolCol) {
+        const candidatePool = [];
+        const seenCandidates = new Set();
         for (const candidate of schoolCandidates) {
+          const key = schoolDedupKey(candidate);
+          if (!key || seenCandidates.has(key)) continue;
+          seenCandidates.add(key);
+          candidatePool.push(candidate);
+        }
+        if (candidatePool.length === 0 && school) {
+          candidatePool.push(school);
+        }
+
+        for (const candidate of candidatePool) {
           if (rows.length >= topK) break;
           const key = schoolDedupKey(candidate);
           if (!key || seenSchoolKeys.has(key)) continue;
@@ -663,6 +663,21 @@ function fallbackRowsFromSources(columns, topK, sources, query, queryType) {
 
           seenSchoolKeys.add(key);
           rows.push(candidateRow);
+        }
+        continue;
+      }
+
+      if (school && schoolCol) {
+        if (!schoolRowMatchesQuery(row, src, schoolLocationHints, query)) {
+          school = "";
+        }
+      }
+
+      if (school) {
+        const key = schoolDedupKey(school);
+        if (key && !seenSchoolKeys.has(key)) {
+          seenSchoolKeys.add(key);
+          rows.push(row);
         }
       }
       continue;
@@ -1270,9 +1285,12 @@ function isPlausibleUnitsSold(units, richText = "") {
 
 function extractSchoolName(title, snippet = "", content = "") {
   const text = `${title}\n${snippet}\n${content}`;
+  const candidates = extractSchoolCandidates(text);
+  if (candidates.length > 0) return candidates[0];
+
   const patterns = [
-    /(trường\s+(?:tiểu học|mẫu giáo|mầm non|thcs|thpt|quốc tế)[^,.;|\n]{2,100})/gi,
-    /(truong\s+(?:tieu hoc|mau giao|mam non|thcs|thpt|quoc te)[^,.;|\n]{2,100})/gi
+    /((?:trường\s+)?(?:đại học|cao đẳng|học viện|tiểu học|mẫu giáo|mầm non|thcs|thpt|quốc tế)[^,.;|\n]{2,100})/gi,
+    /((?:truong\s+)?(?:dai hoc|cao dang|hoc vien|tieu hoc|mau giao|mam non|thcs|thpt|quoc te)[^,.;|\n]{2,100})/gi
   ];
 
   for (const re of patterns) {
@@ -1328,6 +1346,7 @@ function enforceSchoolRowStrictness(row, columns, richText = "") {
 function looksLikeSchoolName(value) {
   const v = stripVietnamese(value).toLowerCase();
   if (!v) return false;
+  if (looksLikeSchoolHeadlineFragment(v)) return false;
   if (
     !hasAny(v, [
       "truong",
@@ -1356,13 +1375,17 @@ function looksLikeSchoolName(value) {
       "truong hoc tai",
       "tuyen sinh",
       "tai duong",
-      "tai cau"
+      "tai cau",
+      "nhung truong",
+      "truong nao",
+      "xuong vi",
+      "trang chu"
     ])
   ) {
     return false;
   }
   const tokenCount = v.split(/\s+/).filter(Boolean).length;
-  return tokenCount >= 3;
+  return tokenCount >= 2 && tokenCount <= 16;
 }
 
 function looksLikeTuitionValue(value) {
@@ -1389,7 +1412,14 @@ function looksLikeAddressValue(value) {
 function cleanSchoolNameCandidate(value) {
   let v = cleanString(value);
   if (!v) return "";
+  v = v.replace(/^\d{1,2}\s*[.)-]?\s*/, "");
+  v = v.replace(/^[-:|]+/, "").trim();
+  v = v.replace(/[;|].*$/, "");
   v = v.replace(/\s*[-|–—]\s*(phường|phuong|quận|quan|tp|tp\.|hcm|ho chi minh).*/i, "");
+  v = v.replace(/\s*[-|–—]\s*(moi nhat|tot nhat|xep hang|hang dau|xuong vi|trang chu|tuyen sinh|danh sach|danh muc).*/i, "");
+  v = v.replace(/\s+(moi nhat|tot nhat|xep hang|hang dau|xuong vi|trang chu|tuyen sinh|danh sach|danh muc)\b.*$/i, "");
+  v = v.replace(/\s+(tiếp tục|tiep tuc|giữ vị trí|giu vi tri|đứng đầu|dung dau|xếp thứ|xep thu)\b.*$/i, "");
+  v = v.replace(/^nhung\s+/i, "");
   v = v.replace(/\s{2,}/g, " ").trim();
   return v;
 }
@@ -1482,8 +1512,8 @@ function isRankingQuery(query) {
 function extractSchoolCandidates(text) {
   const t = cleanString(text);
   const patterns = [
-    /(?:^|\n|\s)(?:\d{1,2}[.)-]?\s*)(trường\s+(?:đại học|cao đẳng|học viện|tiểu học|thcs|thpt)[^,.;|\n]{2,90})/gi,
-    /(?:^|\n|\s)(?:\d{1,2}[.)-]?\s*)(truong\s+(?:dai hoc|cao dang|hoc vien|tieu hoc|thcs|thpt)[^,.;|\n]{2,90})/gi
+    /(?:^|\n|\s)(?:\d{1,2}[.)-]?\s*)((?:trường\s+)?(?:đại học|cao đẳng|học viện|tiểu học|mầm non|mẫu giáo|thcs|thpt)[^,.;|\n]{2,100})/gi,
+    /(?:^|\n|\s)(?:\d{1,2}[.)-]?\s*)((?:truong\s+)?(?:dai hoc|cao dang|hoc vien|tieu hoc|mam non|mau giao|thcs|thpt)[^,.;|\n]{2,100})/gi
   ];
 
   const out = [];
@@ -1492,15 +1522,66 @@ function extractSchoolCandidates(text) {
     const matches = Array.from(t.matchAll(re));
     for (const m of matches) {
       const raw = cleanSchoolNameCandidate(cleanString(m[1] || m[0] || ""));
-      if (!looksLikeSchoolName(raw)) continue;
-      const key = schoolDedupKey(raw);
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      out.push(raw);
-      if (out.length >= 12) return out;
+      const candidates = splitSchoolNameCandidates(raw);
+      for (const candidate of candidates) {
+        if (looksLikeSchoolHeadlineFragment(candidate)) continue;
+        if (!looksLikeSchoolName(candidate)) continue;
+        const key = schoolDedupKey(candidate);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push(candidate);
+        if (out.length >= 12) return out;
+      }
     }
   }
   return out;
+}
+
+function splitSchoolNameCandidates(value) {
+  const text = cleanString(value);
+  if (!text) return [];
+  const out = [];
+  const patterns = [
+    /((?:trường\s+)?(?:đại học|cao đẳng|học viện|tiểu học|mầm non|mẫu giáo|thcs|thpt)\s+[^,.;|\n]{1,90}?)(?=(?:\s+(?:và|va)\s+(?:trường\s+)?(?:đại học|cao đẳng|học viện|tiểu học|mầm non|mẫu giáo|thcs|thpt)\b)|$)/gi,
+    /((?:truong\s+)?(?:dai hoc|cao dang|hoc vien|tieu hoc|mam non|mau giao|thcs|thpt)\s+[^,.;|\n]{1,90}?)(?=(?:\s+(?:va)\s+(?:truong\s+)?(?:dai hoc|cao dang|hoc vien|tieu hoc|mam non|mau giao|thcs|thpt)\b)|$)/gi
+  ];
+
+  for (const re of patterns) {
+    const matches = Array.from(text.matchAll(re));
+    for (const m of matches) {
+      const candidate = cleanSchoolNameCandidate(cleanString(m[1] || m[0] || ""));
+      if (!candidate) continue;
+      out.push(candidate);
+    }
+  }
+
+  if (out.length === 0) return [text];
+  return out;
+}
+
+function looksLikeSchoolHeadlineFragment(value) {
+  const v = stripVietnamese(cleanString(value)).toLowerCase();
+  if (!v) return false;
+  return hasAny(v, [
+    "top ",
+    "xep hang",
+    "hang dau",
+    "tot nhat",
+    "moi nhat",
+    "nhung truong",
+    "truong nao",
+    "danh sach",
+    "danh muc",
+    "tat ca",
+    "cac truong",
+    "truong hoc tai",
+    "tai duong",
+    "tai cau",
+    "trang chu",
+    "xuong vi",
+    "tiep tuc giu vi tri",
+    "xep thu"
+  ]);
 }
 
 function toFriendlyAiError(raw) {
