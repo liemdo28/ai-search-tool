@@ -199,7 +199,12 @@ async function enrichSourcesWithContent(sources) {
 }
 
 async function synthesizeTable({ query, topK, sources, env, baseColumns }) {
-  const fallbackRows = fallbackRowsFromSources(baseColumns, topK, sources, query);
+  const fallbackTable = buildFallbackTable({
+    query,
+    topK,
+    sources,
+    preferredColumns: baseColumns
+  });
   const openAiKey = cleanString(env.OPENAI_API_KEY);
 
   if (!openAiKey) {
@@ -207,18 +212,19 @@ async function synthesizeTable({ query, topK, sources, env, baseColumns }) {
       summary:
         "Đã thu thập nguồn nhưng thiếu OPENAI_API_KEY nên chưa phân tích tự động đầy đủ.",
       assumptions: [
-        "Bảng tạm thời được dựng từ title/snippet.",
+        "Bảng tạm thời được dựng từ title/snippet với schema an toàn.",
         "Cấu hình OPENAI_API_KEY để trích xuất dữ liệu chính xác theo ngữ cảnh."
       ],
-      columns: baseColumns,
-      rows: fallbackRows
+      columns: fallbackTable.columns,
+      rows: fallbackTable.rows
     };
   }
 
-  const evidence = sources
+  const evidenceSources = selectEvidenceSources(sources, query, Math.min(18, Math.max(10, topK * 4)));
+  const evidence = evidenceSources
     .map(
       (s, i) =>
-        `[${i + 1}] Engine: ${s.engine}\nTitle: ${s.title}\nURL: ${s.url}\nSnippet: ${s.snippet}\nExtract: ${s.content_excerpt}`
+        `[${i + 1}] Engine: ${s.engine}\nTitle: ${truncate(s.title, 180)}\nURL: ${s.url}\nSnippet: ${truncate(s.snippet, 380)}\nExtract: ${truncate(s.content_excerpt, 520)}`
     )
     .join("\n\n");
 
@@ -243,6 +249,7 @@ YÊU CẦU:
 4) Tối đa ${topK} dòng.
 5) Trong columns bắt buộc có cột link nguồn (type="url") và cột ghi chú.
 6) Nếu thiếu dữ liệu cho ô nào, để chuỗi rỗng "".
+7) Nếu truy vấn quá rộng hoặc thiếu bằng chứng (ví dụ "toàn thế giới"/"trái đất"), ghi rõ trong summary là chưa đủ bằng chứng để kết luận tuyệt đối.
 
 TRUY VẤN:
 ${query}
@@ -263,10 +270,12 @@ ${evidence}
         },
         body: JSON.stringify({
           model,
-          input: prompt
+          input: prompt,
+          temperature: 0.2,
+          max_output_tokens: 1800
         })
       },
-      45000
+      65000
     );
 
     if (!resp.ok) {
@@ -274,8 +283,8 @@ ${evidence}
       return {
         summary: "Phân tích AI bị lỗi, đang trả bảng tạm từ dữ liệu đã thu thập.",
         assumptions: [truncate(detail, 220)],
-        columns: baseColumns,
-        rows: fallbackRows
+        columns: fallbackTable.columns,
+        rows: fallbackTable.rows
       };
     }
 
@@ -287,8 +296,8 @@ ${evidence}
       return {
         summary: "AI trả về sai định dạng JSON, đang dùng bảng tạm từ nguồn.",
         assumptions: ["Prompt đã ép JSON nhưng model trả về chưa chuẩn."],
-        columns: baseColumns,
-        rows: fallbackRows
+        columns: fallbackTable.columns,
+        rows: fallbackTable.rows
       };
     }
 
@@ -301,14 +310,22 @@ ${evidence}
         ? parsed.assumptions.map(cleanString).filter(Boolean).slice(0, 8)
         : [],
       columns,
-      rows: rows.length > 0 ? rows : fallbackRowsFromSources(columns, topK, sources, query)
+      rows:
+        rows.length > 0
+          ? rows
+          : buildFallbackTable({
+              query,
+              topK,
+              sources,
+              preferredColumns: columns
+            }).rows
     };
   } catch (error) {
     return {
       summary: "Lỗi khi gọi AI, đang dùng bảng tạm từ dữ liệu nguồn.",
       assumptions: [String(error && error.message ? error.message : error)],
-      columns: baseColumns,
-      rows: fallbackRows
+      columns: fallbackTable.columns,
+      rows: fallbackTable.rows
     };
   }
 }
@@ -451,11 +468,37 @@ function normalizeRows(rowsCandidate, columns, topK) {
   return rows;
 }
 
+function buildFallbackTable({ query, topK, sources, preferredColumns }) {
+  const ranked = selectEvidenceSources(sources, query, Math.max(topK * 3, 12));
+  const rowsUsingPreferred = fallbackRowsFromSources(
+    preferredColumns,
+    topK,
+    ranked,
+    query
+  );
+  const quality = estimateTableQuality(preferredColumns, rowsUsingPreferred);
+
+  if (quality >= 0.4) {
+    return { columns: preferredColumns, rows: rowsUsingPreferred };
+  }
+
+  const safeColumns = [
+    { key: "item", label: "Mục tìm thấy", type: "text" },
+    { key: "evidence", label: "Thông tin trích từ nguồn", type: "text" },
+    { key: "source_url", label: "Link", type: "url" },
+    { key: "notes", label: "Ghi chú", type: "text" }
+  ];
+  return {
+    columns: safeColumns,
+    rows: fallbackRowsFromSources(safeColumns, topK, ranked, query)
+  };
+}
+
 function fallbackRowsFromSources(columns, topK, sources, query) {
   const rows = [];
   for (const src of sources.slice(0, topK)) {
     const row = {};
-    let primaryFilled = false;
+    const richText = `${src.title}\n${src.snippet}\n${src.content_excerpt}`.trim();
 
     for (const col of columns) {
       if (isUrlField(col.key, col.label)) {
@@ -466,16 +509,91 @@ function fallbackRowsFromSources(columns, topK, sources, query) {
         row[col.key] = src.snippet || "Thiếu dữ liệu chi tiết từ nguồn.";
         continue;
       }
-      if (!primaryFilled) {
+
+      const hint = `${col.key} ${col.label}`.toLowerCase();
+      if (hint.includes("item") || hint.includes("muc") || hint.includes("model")) {
         row[col.key] = smartNameFromTitle(src.title, query);
-        primaryFilled = true;
-      } else {
-        row[col.key] = "";
+        continue;
       }
+      if (hint.includes("brand") || hint.includes("hang")) {
+        row[col.key] = extractBrand(richText);
+        continue;
+      }
+      if (
+        hint.includes("quantity") ||
+        hint.includes("so_luong") ||
+        hint.includes("units")
+      ) {
+        row[col.key] = extractUnitsSold(richText);
+        continue;
+      }
+      if (
+        hint.includes("doanh_thu") ||
+        hint.includes("revenue") ||
+        hint.includes("gia")
+      ) {
+        row[col.key] = extractMoney(richText);
+        continue;
+      }
+      if (hint.includes("dia_chi") || hint.includes("address")) {
+        row[col.key] = extractAddress(richText);
+        continue;
+      }
+      if (hint.includes("hoc_phi") || hint.includes("tuition")) {
+        row[col.key] = extractMoney(richText);
+        continue;
+      }
+      if (hint.includes("evidence") || hint.includes("thong_tin")) {
+        row[col.key] = truncate(src.snippet || src.content_excerpt, 260);
+        continue;
+      }
+
+      row[col.key] = "";
     }
+
     rows.push(row);
   }
   return rows;
+}
+
+function selectEvidenceSources(sources, query, limit) {
+  const tokens = queryTokens(query);
+  const scored = sources
+    .map((s) => ({
+      ...s,
+      _score: relevanceScore(s, tokens)
+    }))
+    .sort((a, b) => b._score - a._score);
+
+  const selected = [];
+  const domains = new Map();
+  for (const item of scored) {
+    if (selected.length >= limit) break;
+    const domain = extractDomain(item.url);
+    const count = domains.get(domain) || 0;
+    if (count >= 2) continue;
+    domains.set(domain, count + 1);
+    selected.push(item);
+  }
+
+  return selected.length > 0 ? selected : sources.slice(0, limit);
+}
+
+function estimateTableQuality(columns, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return 0;
+  const candidateCols = columns.filter(
+    (c) => !isUrlField(c.key, c.label) && !isNotesField(c.key, c.label)
+  );
+  if (candidateCols.length === 0) return 0;
+
+  let points = 0;
+  for (const row of rows) {
+    for (const col of candidateCols) {
+      const value = cleanString(row[col.key] || "");
+      if (value) points += 1;
+    }
+  }
+  return points / (rows.length * candidateCols.length);
 }
 
 async function runPool(items, concurrency, worker) {
@@ -593,6 +711,61 @@ function hasAny(text, keys) {
   return keys.some((k) => text.includes(k));
 }
 
+function queryTokens(query) {
+  const stopWords = new Set([
+    "top",
+    "nhat",
+    "re",
+    "tot",
+    "la",
+    "cho",
+    "cua",
+    "tai",
+    "o",
+    "the",
+    "gioi",
+    "trai",
+    "dat",
+    "nam"
+  ]);
+
+  return stripVietnamese(query)
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2 && !stopWords.has(t));
+}
+
+function relevanceScore(source, tokens) {
+  const hay = stripVietnamese(
+    `${source.title} ${source.snippet} ${source.content_excerpt || ""}`
+  ).toLowerCase();
+
+  let score = 0;
+  for (const token of tokens) {
+    if (!token) continue;
+    if (hay.includes(token)) score += 2;
+  }
+
+  const badHints = ["quang cao", "advertisement", "shop", "mua ngay"];
+  for (const hint of badHints) {
+    if (hay.includes(hint)) score -= 1;
+  }
+
+  if (source.title) score += 1;
+  if (source.snippet) score += 1;
+  if (source.content_excerpt) score += 1;
+  return score;
+}
+
+function extractDomain(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
 function stripVietnamese(text) {
   return cleanString(text)
     .normalize("NFD")
@@ -621,6 +794,69 @@ function toSnakeKey(input) {
 
 function humanizeKey(key) {
   return cleanString(String(key || "").replace(/_/g, " ")) || "Cột";
+}
+
+function extractMoney(text) {
+  const t = cleanString(text);
+  const patterns = [
+    /(\d[\d.,]*)\s*(ty|tỷ)\b/i,
+    /(\d[\d.,]*)\s*(trieu|triệu)\b/i,
+    /(\d[\d.,]*)\s*(nghin|nghìn)\b/i,
+    /(\d[\d.,]*)\s*(vnd|đ|dong)\b/i
+  ];
+  for (const re of patterns) {
+    const m = t.match(re);
+    if (m) return `${m[1]} ${m[2]}`.trim();
+  }
+  return "";
+}
+
+function extractUnitsSold(text) {
+  const t = cleanString(text);
+  const patterns = [
+    /(\d[\d.,]*)\s*(xe|chiếc|chiec|units?)\b/i,
+    /(doanh so|sales?)\s*[:\-]?\s*(\d[\d.,]*)/i
+  ];
+  for (const re of patterns) {
+    const m = t.match(re);
+    if (!m) continue;
+    if (m[2] && /\d/.test(m[2])) return m[2];
+    if (m[1] && /\d/.test(m[1])) return m[1];
+  }
+  return "";
+}
+
+function extractAddress(text) {
+  const t = cleanString(text);
+  const m =
+    t.match(/(dia chi|địa chỉ)\s*[:\-]?\s*([^.;|]{8,120})/i) ||
+    t.match(/(\d{1,4}[^,;]{3,80}(quan|q\.|district|huyen|phuong)[^,;]{0,60})/i);
+  if (!m) return "";
+  return cleanString(m[2] || m[1] || "");
+}
+
+function extractBrand(text) {
+  const t = stripVietnamese(text).toLowerCase();
+  const brands = [
+    "toyota",
+    "honda",
+    "hyundai",
+    "ford",
+    "kia",
+    "mazda",
+    "bmw",
+    "mercedes",
+    "audi",
+    "tesla",
+    "vinfast",
+    "mitsubishi",
+    "nissan",
+    "isuzu"
+  ];
+  for (const b of brands) {
+    if (t.includes(b)) return b.toUpperCase();
+  }
+  return "";
 }
 
 function cleanCell(value) {
