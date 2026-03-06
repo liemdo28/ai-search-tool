@@ -25,6 +25,7 @@ export async function onRequestPost({ request, env }) {
 
     const lang = cleanString(env.SERPAPI_LANG) || "vi";
     const country = cleanString(env.SERPAPI_COUNTRY) || "vn";
+    const queryType = detectQueryType(query);
     const baseColumns = inferSchemaFromQuery(query);
 
     const sources = await collectSources({
@@ -59,7 +60,8 @@ export async function onRequestPost({ request, env }) {
       topK,
       sources: enriched,
       env,
-      baseColumns
+      baseColumns,
+      queryType
     });
 
     return json({
@@ -198,12 +200,20 @@ async function enrichSourcesWithContent(sources) {
   );
 }
 
-async function synthesizeTable({ query, topK, sources, env, baseColumns }) {
+async function synthesizeTable({
+  query,
+  topK,
+  sources,
+  env,
+  baseColumns,
+  queryType
+}) {
   const fallbackTable = buildFallbackTable({
     query,
     topK,
     sources,
-    preferredColumns: baseColumns
+    preferredColumns: baseColumns,
+    queryType
   });
   const openAiKey = cleanString(env.OPENAI_API_KEY);
 
@@ -317,7 +327,8 @@ ${evidence}
               query,
               topK,
               sources,
-              preferredColumns: columns
+              preferredColumns: columns,
+              queryType
             }).rows
     };
   } catch (error) {
@@ -468,37 +479,59 @@ function normalizeRows(rowsCandidate, columns, topK) {
   return rows;
 }
 
-function buildFallbackTable({ query, topK, sources, preferredColumns }) {
+function buildFallbackTable({
+  query,
+  topK,
+  sources,
+  preferredColumns,
+  queryType
+}) {
   const ranked = selectEvidenceSources(sources, query, Math.max(topK * 3, 12));
   const rowsUsingPreferred = fallbackRowsFromSources(
     preferredColumns,
     topK,
     ranked,
-    query
+    query,
+    queryType
   );
-  const quality = estimateTableQuality(preferredColumns, rowsUsingPreferred);
+  const quality = estimateTableQuality(
+    preferredColumns,
+    rowsUsingPreferred,
+    queryType
+  );
+  const threshold = queryType === "vehicle" ? 0.58 : 0.4;
 
-  if (quality >= 0.4) {
+  if (quality >= threshold) {
     return { columns: preferredColumns, rows: rowsUsingPreferred };
   }
 
-  const safeColumns = [
-    { key: "item", label: "Mục tìm thấy", type: "text" },
-    { key: "evidence", label: "Thông tin trích từ nguồn", type: "text" },
-    { key: "source_url", label: "Link", type: "url" },
-    { key: "notes", label: "Ghi chú", type: "text" }
-  ];
+  const safeColumns =
+    queryType === "vehicle"
+      ? [
+          { key: "model", label: "Dòng xe", type: "text" },
+          { key: "brand", label: "Hãng xe", type: "text" },
+          { key: "evidence", label: "Thông tin trích từ nguồn", type: "text" },
+          { key: "source_url", label: "Link", type: "url" },
+          { key: "notes", label: "Ghi chú", type: "text" }
+        ]
+      : [
+          { key: "item", label: "Mục tìm thấy", type: "text" },
+          { key: "evidence", label: "Thông tin trích từ nguồn", type: "text" },
+          { key: "source_url", label: "Link", type: "url" },
+          { key: "notes", label: "Ghi chú", type: "text" }
+        ];
   return {
     columns: safeColumns,
-    rows: fallbackRowsFromSources(safeColumns, topK, ranked, query)
+    rows: fallbackRowsFromSources(safeColumns, topK, ranked, query, queryType)
   };
 }
 
-function fallbackRowsFromSources(columns, topK, sources, query) {
+function fallbackRowsFromSources(columns, topK, sources, query, queryType) {
   const rows = [];
   for (const src of sources.slice(0, topK)) {
     const row = {};
     const richText = `${src.title}\n${src.snippet}\n${src.content_excerpt}`.trim();
+    const vehicle = extractVehicleEntity(richText);
 
     for (const col of columns) {
       if (isUrlField(col.key, col.label)) {
@@ -512,11 +545,15 @@ function fallbackRowsFromSources(columns, topK, sources, query) {
 
       const hint = `${col.key} ${col.label}`.toLowerCase();
       if (hint.includes("item") || hint.includes("muc") || hint.includes("model")) {
-        row[col.key] = smartNameFromTitle(src.title, query);
+        if (queryType === "vehicle") {
+          row[col.key] = vehicle.model || "";
+        } else {
+          row[col.key] = smartNameFromTitle(src.title, query);
+        }
         continue;
       }
       if (hint.includes("brand") || hint.includes("hang")) {
-        row[col.key] = extractBrand(richText);
+        row[col.key] = vehicle.brand || extractBrand(richText);
         continue;
       }
       if (
@@ -524,14 +561,17 @@ function fallbackRowsFromSources(columns, topK, sources, query) {
         hint.includes("so_luong") ||
         hint.includes("units")
       ) {
-        row[col.key] = extractUnitsSold(richText);
+        row[col.key] = extractUnitsSold(richText, queryType);
         continue;
       }
       if (
         hint.includes("doanh_thu") ||
-        hint.includes("revenue") ||
-        hint.includes("gia")
+        hint.includes("revenue")
       ) {
+        row[col.key] = extractRevenueOnly(richText);
+        continue;
+      }
+      if (hint.includes("gia") || hint.includes("price")) {
         row[col.key] = extractMoney(richText);
         continue;
       }
@@ -579,7 +619,7 @@ function selectEvidenceSources(sources, query, limit) {
   return selected.length > 0 ? selected : sources.slice(0, limit);
 }
 
-function estimateTableQuality(columns, rows) {
+function estimateTableQuality(columns, rows, queryType) {
   if (!Array.isArray(rows) || rows.length === 0) return 0;
   const candidateCols = columns.filter(
     (c) => !isUrlField(c.key, c.label) && !isNotesField(c.key, c.label)
@@ -593,7 +633,23 @@ function estimateTableQuality(columns, rows) {
       if (value) points += 1;
     }
   }
-  return points / (rows.length * candidateCols.length);
+  let base = points / (rows.length * candidateCols.length);
+
+  if (queryType === "vehicle") {
+    let penalties = 0;
+    for (const row of rows) {
+      const model = cleanString(row.model || row.dong_xe || "");
+      const units = cleanString(row.units_sold || row.so_luong_ban || "");
+      const revenue = cleanString(row.revenue || row.tong_doanh_thu || "");
+
+      if (model && looksLikeArticleTitle(model)) penalties += 0.4;
+      if (isLikelyYear(units)) penalties += 0.25;
+      if (revenue && !looksLikeRevenueValue(revenue)) penalties += 0.2;
+    }
+    base = Math.max(0, base - penalties / Math.max(1, rows.length));
+  }
+
+  return base;
 }
 
 async function runPool(items, concurrency, worker) {
@@ -711,6 +767,29 @@ function hasAny(text, keys) {
   return keys.some((k) => text.includes(k));
 }
 
+function detectQueryType(query) {
+  const q = stripVietnamese(query).toLowerCase();
+  if (
+    hasAny(q, [
+      "xe",
+      "oto",
+      "o to",
+      "xe hoi",
+      "mau xe",
+      "doanh so",
+      "ban chay"
+    ])
+  ) {
+    return "vehicle";
+  }
+  if (
+    hasAny(q, ["truong", "hoc phi", "tieu hoc", "mam non", "hoc sinh", "dia chi"])
+  ) {
+    return "school";
+  }
+  return "generic";
+}
+
 function queryTokens(query) {
   const stopWords = new Set([
     "top",
@@ -811,17 +890,38 @@ function extractMoney(text) {
   return "";
 }
 
-function extractUnitsSold(text) {
+function extractRevenueOnly(text) {
   const t = cleanString(text);
   const patterns = [
-    /(\d[\d.,]*)\s*(xe|chiếc|chiec|units?)\b/i,
-    /(doanh so|sales?)\s*[:\-]?\s*(\d[\d.,]*)/i
+    /(doanh thu|revenue)[^0-9]{0,20}(\d[\d.,]*\s*(ty|tỷ|trieu|triệu|usd|vnd|đ|dong))/i,
+    /(\d[\d.,]*\s*(ty|tỷ|trieu|triệu|usd|vnd|đ|dong))[^a-z0-9]{0,12}(doanh thu|revenue)/i
   ];
   for (const re of patterns) {
     const m = t.match(re);
     if (!m) continue;
-    if (m[2] && /\d/.test(m[2])) return m[2];
-    if (m[1] && /\d/.test(m[1])) return m[1];
+    const money = cleanString(m[2] || m[1] || "");
+    if (money) return money;
+  }
+  return "";
+}
+
+function extractUnitsSold(text, queryType = "generic") {
+  const t = cleanString(text);
+  const patterns = [
+    /(\d[\d.,]*)\s*(xe|chiếc|chiec|units?)\b/i,
+    /(doanh so|sales?|ban duoc|sold)[^0-9]{0,20}(\d[\d.,]*)/i
+  ];
+
+  for (const re of patterns) {
+    const m = t.match(re);
+    if (!m) continue;
+    const first = cleanString(m[1] || "");
+    const second = cleanString(m[2] || "");
+    const candidate = /\d/.test(second) ? second : first;
+    const numeric = toNumericInt(candidate);
+    if (!numeric) continue;
+    if (queryType === "vehicle" && isLikelyYear(candidate)) continue;
+    return String(candidate);
   }
   return "";
 }
@@ -857,6 +957,100 @@ function extractBrand(text) {
     if (t.includes(b)) return b.toUpperCase();
   }
   return "";
+}
+
+function extractVehicleEntity(text) {
+  const cleaned = cleanString(text);
+  const brands = [
+    "TOYOTA",
+    "HONDA",
+    "HYUNDAI",
+    "FORD",
+    "KIA",
+    "MAZDA",
+    "BMW",
+    "MERCEDES",
+    "AUDI",
+    "TESLA",
+    "VINFAST",
+    "MITSUBISHI",
+    "NISSAN",
+    "ISUZU"
+  ];
+
+  // Pattern: Brand + model token(s), ex: Mazda CX-5, Toyota Vios, VinFast VF 5.
+  for (const brand of brands) {
+    const re = new RegExp(
+      `\\b${brand}\\s+([A-Z0-9]{1,5}(?:-[A-Z0-9]{1,5})?(?:\\s+[A-Z0-9]{1,5}(?:-[A-Z0-9]{1,5})?)?)\\b`,
+      "i"
+    );
+    const m = cleaned.match(re);
+    if (!m) continue;
+    const modelPart = cleanString(m[1]).toUpperCase();
+    if (!modelPart || looksLikeNonModelToken(modelPart)) continue;
+    return {
+      brand,
+      model: `${brand} ${modelPart}`.replace(/\s+/g, " ").trim()
+    };
+  }
+
+  // Common standalone model hints.
+  const known = [
+    ["VINFAST", /(?:\bVF\s?3\b|\bVF\s?5\b|\bVF\s?6\b|\bVF\s?7\b|\bVF\s?8\b)/i],
+    ["MAZDA", /\b(CX-3|CX-5|CX-8|MAZDA\s?2|MAZDA\s?3|MAZDA\s?6)\b/i],
+    ["TOYOTA", /\b(VIOS|FORTUNER|INNOVA|COROLLA|CAMRY|YARIS)\b/i],
+    ["HYUNDAI", /\b(ACCENT|TUCSON|SANTA\s?FE|CRETA)\b/i],
+    ["KIA", /\b(SELTOS|SONET|K3|CARNIVAL)\b/i],
+    ["HONDA", /\b(CITY|CIVIC|CR-V|HR-V)\b/i],
+    ["FORD", /\b(RANGER|EVEREST|TERRITORY)\b/i]
+  ];
+
+  for (const [brand, re] of known) {
+    const m = cleaned.match(re);
+    if (!m) continue;
+    const token = cleanString(m[1] || m[0]).toUpperCase();
+    return { brand, model: `${brand} ${token}`.replace(/\s+/g, " ").trim() };
+  }
+
+  return { brand: "", model: "" };
+}
+
+function looksLikeNonModelToken(value) {
+  const v = stripVietnamese(value).toLowerCase();
+  return hasAny(v, [
+    "top",
+    "thang",
+    "nam",
+    "ban",
+    "chay",
+    "nhat",
+    "xe",
+    "oto"
+  ]);
+}
+
+function looksLikeArticleTitle(value) {
+  const v = stripVietnamese(value).toLowerCase();
+  return (
+    v.split(/\s+/).length >= 4 &&
+    hasAny(v, ["top", "thang", "nam", "ban chay", "xep hang", "thi truong"])
+  );
+}
+
+function looksLikeRevenueValue(value) {
+  const v = stripVietnamese(value).toLowerCase();
+  if (!/\d/.test(v)) return false;
+  return hasAny(v, ["ty", "trieu", "usd", "vnd", "dong", "đ"]);
+}
+
+function isLikelyYear(value) {
+  const n = toNumericInt(value);
+  return n >= 1900 && n <= 2099;
+}
+
+function toNumericInt(value) {
+  const n = Number.parseInt(String(value || "").replace(/[^\d]/g, ""), 10);
+  return Number.isNaN(n) ? 0 : n;
 }
 
 function cleanCell(value) {
