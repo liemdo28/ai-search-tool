@@ -539,6 +539,8 @@ function buildFallbackTable({
 function fallbackRowsFromSources(columns, topK, sources, query, queryType) {
   const rows = [];
   const seenSchoolKeys = new Set();
+  const schoolLocationHints =
+    queryType === "school" ? extractLocationHints(query) : [];
   for (const src of sources) {
     const row = {};
     const richText = `${src.title}\n${src.snippet}\n${src.content_excerpt}`.trim();
@@ -620,6 +622,7 @@ function fallbackRowsFromSources(columns, topK, sources, query, queryType) {
       const school =
         cleanString(row.school_name || row.ten_truong || row["tên trường"] || "");
       if (!school) continue;
+      if (!schoolRowMatchesQuery(row, src, schoolLocationHints)) continue;
       const key = schoolDedupKey(school);
       if (!key || seenSchoolKeys.has(key)) continue;
       seenSchoolKeys.add(key);
@@ -1283,6 +1286,10 @@ function looksLikeSchoolName(value) {
       "moi nhat",
       "xep hang",
       "danh sach",
+      "danh muc",
+      "tat ca",
+      "cac truong",
+      "truong hoc tai",
       "tuyen sinh",
       "tai duong",
       "tai cau"
@@ -1330,6 +1337,59 @@ function schoolDedupKey(value) {
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s{2,}/g, " ")
     .trim();
+}
+
+function extractLocationHints(query) {
+  const q = stripVietnamese(query).toLowerCase();
+  const out = [];
+  const patterns = [
+    /\bphuong\s+[a-z0-9]+(?:\s+[a-z0-9]+){0,2}\b/g,
+    /\bquan\s+\d{1,2}\b/g,
+    /\bquan\s+[a-z0-9]+(?:\s+[a-z0-9]+){0,1}\b/g,
+    /\bhcm\b/g,
+    /\bho chi minh\b/g
+  ];
+
+  for (const re of patterns) {
+    const matches = q.match(re) || [];
+    for (const m of matches) {
+      const hint = cleanString(m);
+      if (!hint) continue;
+      if (!out.includes(hint)) out.push(hint);
+    }
+  }
+  return out;
+}
+
+function schoolRowMatchesQuery(row, source, locationHints) {
+  const school = cleanString(row.school_name || row.ten_truong || "");
+  if (!looksLikeSchoolName(school)) return false;
+
+  const hay = stripVietnamese(
+    `${school}\n${row.address || ""}\n${source.title || ""}\n${source.snippet || ""}\n${source.content_excerpt || ""}`
+  ).toLowerCase();
+
+  if (looksLikeSchoolListPage(school) || looksLikeSchoolListPage(source.title || "")) {
+    return false;
+  }
+
+  if (!Array.isArray(locationHints) || locationHints.length === 0) return true;
+
+  // If query mentions a specific ward/district, keep only rows matching at least one hint.
+  return locationHints.some((hint) => hay.includes(hint));
+}
+
+function looksLikeSchoolListPage(value) {
+  const v = stripVietnamese(cleanString(value)).toLowerCase();
+  return hasAny(v, [
+    "danh muc",
+    "danh sach",
+    "top ",
+    "tat ca",
+    "cac truong",
+    "truong hoc tai",
+    "xep hang"
+  ]);
 }
 
 function toFriendlyAiError(raw) {
