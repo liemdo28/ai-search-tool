@@ -19,11 +19,15 @@ form.addEventListener("submit", async (event) => {
 
   const query = document.getElementById("query").value.trim();
   const targetSites = Number(document.getElementById("target-sites").value);
-  const topK = 10;
+  const topK = Number(document.getElementById("top-k").value);
   const engines = ["google", "bing"];
 
   if (!query) {
     updateStatus("Vui lòng nhập từ khóa.", true);
+    return;
+  }
+  if (!Number.isFinite(topK) || topK < 1 || topK > 20) {
+    updateStatus("Top K phải trong khoảng 1-20.", true);
     return;
   }
 

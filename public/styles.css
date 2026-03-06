@@ -72,6 +72,7 @@ body {
   display: flex;
   gap: 14px;
   margin-bottom: 16px;
+  align-items: flex-start;
 }
 
 .field {
@@ -94,6 +95,7 @@ body {
 
 .field.small {
   width: 180px;
+  flex: 0 0 180px;
 }
 
 textarea,
