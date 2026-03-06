@@ -1,15 +1,14 @@
-# Neon AI Search Tool
+# AI Search (Cloudflare Pages)
 
 Web app miễn phí để:
 - Nhập từ khóa.
-- Thu thập dữ liệu từ nhiều website qua nhiều search engines (Google, Bing, DuckDuckGo, Yahoo).
-- Dùng AI tổng hợp thành bảng gồm: tên, địa chỉ, học phí, link nguồn.
+- Thu thập dữ liệu từ nhiều website.
+- Tổng hợp thành bảng phân tích ngay trên browser (không cần login người dùng cuối).
 
 ## Stack
-- Cloudflare Pages + Functions (free tier).
+- Cloudflare Pages + Functions (free tier, kiến trúc duy nhất trong repo).
 - SerpAPI để lấy kết quả tìm kiếm.
 - OpenAI Responses API để chuẩn hóa dữ liệu thành bảng.
-- Không cần login cho người dùng cuối.
 
 ## 1) Chạy local
 ```bash
@@ -53,8 +52,8 @@ Body mẫu:
 {
   "query": "top 5 trường tiểu học có học phí rẻ nhất HCM",
   "target_sites": 20,
-  "top_k": 5,
-  "engines": ["google", "bing", "duckduckgo"]
+  "top_k": 10,
+  "engines": ["google", "bing"]
 }
 ```
 

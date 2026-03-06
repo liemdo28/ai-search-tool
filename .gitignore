@@ -1,4 +1,13 @@
 .dev.vars
+.env
 node_modules
 .claude/
 .wrangler/
+.venv/
+.mypy_cache/
+build/
+dist/
+backend/
+backend_proxy/
+frontend/
+website/

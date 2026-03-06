@@ -4,7 +4,7 @@ export async function onRequestPost({ request, env }) {
   try {
     const body = await request.json().catch(() => ({}));
     const query = cleanString(body.query);
-    const targetSites = clampInt(body.target_sites, 5, 60, 20);
+    const targetSites = clampInt(body.target_sites, 1, 60, 20);
     const topK = clampInt(body.top_k, 1, 20, 5);
     const engines = normalizeEngines(body.engines);
 
@@ -290,9 +290,10 @@ ${evidence}
 
     if (!resp.ok) {
       const detail = await resp.text();
+      const friendly = toFriendlyAiError(detail);
       return {
         summary: "Phân tích AI bị lỗi, đang trả bảng tạm từ dữ liệu đã thu thập.",
-        assumptions: [truncate(detail, 220)],
+        assumptions: [friendly],
         columns: fallbackTable.columns,
         rows: fallbackTable.rows
       };
@@ -332,9 +333,10 @@ ${evidence}
             }).rows
     };
   } catch (error) {
+    const message = String(error && error.message ? error.message : error);
     return {
       summary: "Lỗi khi gọi AI, đang dùng bảng tạm từ dữ liệu nguồn.",
-      assumptions: [String(error && error.message ? error.message : error)],
+      assumptions: [toFriendlyAiError(message)],
       columns: fallbackTable.columns,
       rows: fallbackTable.rows
     };
@@ -499,7 +501,7 @@ function buildFallbackTable({
     rowsUsingPreferred,
     queryType
   );
-  const threshold = queryType === "vehicle" ? 0.58 : 0.4;
+  const threshold = queryType === "vehicle" ? 0.58 : queryType === "school" ? 0.68 : 0.4;
 
   if (quality >= threshold) {
     return { columns: preferredColumns, rows: rowsUsingPreferred };
@@ -510,6 +512,13 @@ function buildFallbackTable({
       ? [
           { key: "model", label: "Dòng xe", type: "text" },
           { key: "brand", label: "Hãng xe", type: "text" },
+          { key: "evidence", label: "Thông tin trích từ nguồn", type: "text" },
+          { key: "source_url", label: "Link", type: "url" },
+          { key: "notes", label: "Ghi chú", type: "text" }
+        ]
+      : queryType === "school"
+      ? [
+          { key: "school_name", label: "Tên trường", type: "text" },
           { key: "evidence", label: "Thông tin trích từ nguồn", type: "text" },
           { key: "source_url", label: "Link", type: "url" },
           { key: "notes", label: "Ghi chú", type: "text" }
@@ -532,6 +541,7 @@ function fallbackRowsFromSources(columns, topK, sources, query, queryType) {
     const row = {};
     const richText = `${src.title}\n${src.snippet}\n${src.content_excerpt}`.trim();
     const vehicle = extractVehicleEntity(richText);
+    const schoolName = extractSchoolName(src.title, src.snippet, src.content_excerpt);
 
     for (const col of columns) {
       if (isUrlField(col.key, col.label)) {
@@ -544,6 +554,15 @@ function fallbackRowsFromSources(columns, topK, sources, query, queryType) {
       }
 
       const hint = `${col.key} ${col.label}`.toLowerCase();
+      if (
+        hint.includes("school") ||
+        hint.includes("ten_truong") ||
+        hint.includes("tên trường") ||
+        /\btruong\b/.test(stripVietnamese(hint))
+      ) {
+        row[col.key] = schoolName;
+        continue;
+      }
       if (hint.includes("item") || hint.includes("muc") || hint.includes("model")) {
         if (queryType === "vehicle") {
           row[col.key] = vehicle.model || "";
@@ -580,7 +599,7 @@ function fallbackRowsFromSources(columns, topK, sources, query, queryType) {
         continue;
       }
       if (hint.includes("hoc_phi") || hint.includes("tuition")) {
-        row[col.key] = extractMoney(richText);
+        row[col.key] = extractTuition(richText);
         continue;
       }
       if (hint.includes("evidence") || hint.includes("thong_tin")) {
@@ -593,6 +612,9 @@ function fallbackRowsFromSources(columns, topK, sources, query, queryType) {
 
     if (queryType === "vehicle") {
       enforceVehicleRowStrictness(row, columns, richText);
+    }
+    if (queryType === "school") {
+      enforceSchoolRowStrictness(row, columns);
     }
 
     rows.push(row);
@@ -649,6 +671,19 @@ function estimateTableQuality(columns, rows, queryType) {
       if (model && looksLikeArticleTitle(model)) penalties += 0.4;
       if (isLikelyYear(units)) penalties += 0.25;
       if (revenue && !looksLikeRevenueValue(revenue)) penalties += 0.2;
+    }
+    base = Math.max(0, base - penalties / Math.max(1, rows.length));
+  }
+  if (queryType === "school") {
+    let penalties = 0;
+    for (const row of rows) {
+      const school = cleanString(row.school_name || row.ten_truong || "");
+      const tuition = cleanString(row.tuition || row.hoc_phi || "");
+      const address = cleanString(row.address || row.dia_chi || "");
+
+      if (school && !looksLikeSchoolName(school)) penalties += 0.35;
+      if (tuition && !looksLikeTuitionValue(tuition)) penalties += 0.25;
+      if (address && !looksLikeAddressValue(address)) penalties += 0.2;
     }
     base = Math.max(0, base - penalties / Math.max(1, rows.length));
   }
@@ -922,11 +957,27 @@ function extractMoney(text) {
     /(\d[\d.,]*)\s*(ty|tỷ)\b/i,
     /(\d[\d.,]*)\s*(trieu|triệu)\b/i,
     /(\d[\d.,]*)\s*(nghin|nghìn)\b/i,
-    /(\d[\d.,]*)\s*(vnd|đ|dong)\b/i
+    /(\d[\d.,]*)\s*(vnd|vnđ|dong)\b/i
   ];
   for (const re of patterns) {
     const m = t.match(re);
     if (m) return `${m[1]} ${m[2]}`.trim();
+  }
+  return "";
+}
+
+function extractTuition(text) {
+  const t = cleanString(text);
+  const patterns = [
+    /(hoc phi|học phí|tuition|fee)[^0-9]{0,24}(\d[\d.,]*(?:\s*[-~tođến]+\s*\d[\d.,]*)?\s*(ty|tỷ|trieu|triệu|nghin|nghìn|vnd|vnđ|dong))(?:\s*\/?\s*(thang|tháng|nam|năm))?/i,
+    /(\d[\d.,]*(?:\s*[-~tođến]+\s*\d[\d.,]*)?\s*(ty|tỷ|trieu|triệu|nghin|nghìn|vnd|vnđ|dong))(?:\s*\/?\s*(thang|tháng|nam|năm))?[^a-z0-9]{0,20}(hoc phi|học phí|tuition|fee)/i
+  ];
+  for (const re of patterns) {
+    const m = t.match(re);
+    if (!m) continue;
+    const amount = cleanString(m[2] || m[1] || "");
+    const period = cleanString(m[4] || m[3] || "");
+    return period ? `${amount}/${period}` : amount;
   }
   return "";
 }
@@ -984,7 +1035,9 @@ function extractAddress(text) {
     t.match(/(dia chi|địa chỉ)\s*[:\-]?\s*([^.;|]{8,120})/i) ||
     t.match(/(\d{1,4}[^,;]{3,80}(quan|q\.|district|huyen|phuong)[^,;]{0,60})/i);
   if (!m) return "";
-  return cleanString(m[2] || m[1] || "");
+  const out = cleanString(m[2] || m[1] || "");
+  if (!looksLikeAddressValue(out)) return "";
+  return out;
 }
 
 function extractBrand(text) {
@@ -1143,6 +1196,86 @@ function isPlausibleUnitsSold(units, richText = "") {
   const near = stripVietnamese(richText).toLowerCase();
   if (near.includes("top 10") && n === 10) return false;
   return true;
+}
+
+function extractSchoolName(title, snippet = "", content = "") {
+  const text = `${title}\n${snippet}\n${content}`;
+  const patterns = [
+    /(truong\s+(?:tieu hoc|mau giao|mam non|thcs|thpt)[^,.;|\n]{2,80})/i,
+    /(trường\s+(?:tiểu học|mẫu giáo|mầm non|thcs|thpt)[^,.;|\n]{2,80})/i
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (!m) continue;
+    const candidate = cleanString(m[1]);
+    if (looksLikeSchoolName(candidate)) return candidate;
+  }
+
+  const base = smartNameFromTitle(title, "");
+  return looksLikeSchoolName(base) ? base : "";
+}
+
+function enforceSchoolRowStrictness(row, columns) {
+  const schoolCol = columns.find((c) =>
+    /school|ten_truong|tên trường|truong/i.test(`${c.key} ${c.label}`)
+  );
+  const tuitionCol = columns.find((c) =>
+    /tuition|hoc_phi|học phí/i.test(`${c.key} ${c.label}`)
+  );
+  const addressCol = columns.find((c) =>
+    /address|dia_chi|địa chỉ/i.test(`${c.key} ${c.label}`)
+  );
+
+  if (schoolCol) {
+    const school = cleanString(row[schoolCol.key] || "");
+    if (school && !looksLikeSchoolName(school)) {
+      row[schoolCol.key] = "";
+    }
+  }
+  if (tuitionCol) {
+    const tuition = cleanString(row[tuitionCol.key] || "");
+    if (tuition && !looksLikeTuitionValue(tuition)) {
+      row[tuitionCol.key] = "";
+    }
+  }
+  if (addressCol) {
+    const address = cleanString(row[addressCol.key] || "");
+    if (address && !looksLikeAddressValue(address)) {
+      row[addressCol.key] = "";
+    }
+  }
+}
+
+function looksLikeSchoolName(value) {
+  const v = stripVietnamese(value).toLowerCase();
+  return hasAny(v, ["truong", "thcs", "thpt", "mam non", "tieu hoc"]);
+}
+
+function looksLikeTuitionValue(value) {
+  const v = stripVietnamese(value).toLowerCase();
+  return /\d/.test(v) && hasAny(v, ["trieu", "nghin", "ty", "vnd", "vnđ", "dong"]);
+}
+
+function looksLikeAddressValue(value) {
+  const v = stripVietnamese(value).toLowerCase();
+  if (v.length < 8) return false;
+  return hasAny(v, ["quan", "q.", "phuong", "duong", "tp", "hcm", "ho chi minh", "district"]);
+}
+
+function toFriendlyAiError(raw) {
+  const text = cleanString(String(raw || ""));
+  if (!text) return "Không thể phân tích AI ở thời điểm hiện tại.";
+  const lower = text.toLowerCase();
+  if (lower.includes("unsupported_country_region_territory")) {
+    return "AI provider đang từ chối theo region hiện tại. Hệ thống đã chuyển sang bảng tạm từ nguồn search.";
+  }
+  if (lower.includes("rate limit") || lower.includes("quota")) {
+    return "AI provider đang giới hạn request/quota. Hệ thống đã chuyển sang bảng tạm từ nguồn search.";
+  }
+  if (lower.includes("timeout")) {
+    return "AI provider timeout. Hệ thống đã chuyển sang bảng tạm từ nguồn search.";
+  }
+  return truncate(text, 180);
 }
 
 function toNumericInt(value) {

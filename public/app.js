@@ -19,18 +19,11 @@ form.addEventListener("submit", async (event) => {
 
   const query = document.getElementById("query").value.trim();
   const targetSites = Number(document.getElementById("target-sites").value);
-  const topK = Number(document.getElementById("top-k").value);
-  const engines = Array.from(
-    document.querySelectorAll('.chip input[type="checkbox"]:checked')
-  ).map((node) => node.value);
+  const topK = 10;
+  const engines = ["google", "bing"];
 
   if (!query) {
     updateStatus("Vui lòng nhập từ khóa.", true);
-    return;
-  }
-
-  if (engines.length === 0) {
-    updateStatus("Cần chọn ít nhất 1 search engine.", true);
     return;
   }
 

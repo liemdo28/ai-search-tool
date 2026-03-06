@@ -3,60 +3,40 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Neon AI Search Table</title>
+    <title>AI Search</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="page">
-      <section class="hero card">
-        <p class="badge">FREE BROWSER TOOL</p>
-        <h1>AI Search bảng thống kê đa website</h1>
-        <p class="subtitle">
-          Nhập từ khóa, chọn số website cần thu thập, AI tự suy luận cấu trúc
-          cột phù hợp với truy vấn và trả bảng báo cáo tương ứng.
-        </p>
-      </section>
+    <main class="app-shell">
+      <header class="hero">
+        <h1><span class="icon">⚡</span> AI SEARCH</h1>
+        <p>Thu thập • Phân tích • Tổng hợp thông minh từ nhiều nguồn</p>
+      </header>
 
-      <section class="card">
-        <form id="search-form" class="form-grid">
-          <label class="field field-full">
-            <span>Từ khóa cần tìm</span>
-            <textarea
-              id="query"
-              rows="3"
-              placeholder='Ví dụ: "top 5 trường tiểu học có học phí rẻ nhất HCM"'
-              required
-            ></textarea>
-          </label>
-
-          <label class="field">
-            <span>Số website cần thu thập (x)</span>
-            <input id="target-sites" type="number" min="5" max="60" value="20" />
-          </label>
-
-          <label class="field">
-            <span>Số dòng kết quả muốn lấy (top k)</span>
-            <input id="top-k" type="number" min="1" max="20" value="5" />
-          </label>
-
-          <div class="field">
-            <span>Search engines</span>
-            <div class="chips">
-              <label class="chip"><input type="checkbox" value="google" checked />Google</label>
-              <label class="chip"><input type="checkbox" value="bing" checked />Bing</label>
-              <label class="chip"><input type="checkbox" value="duckduckgo" />DuckDuckGo</label>
-              <label class="chip"><input type="checkbox" value="yahoo" />Yahoo</label>
-            </div>
+      <section class="search-card">
+        <form id="search-form" class="search-form">
+          <div class="row">
+            <label class="field grow">
+              <span>Câu hỏi / Từ khóa</span>
+              <textarea
+                id="query"
+                rows="2"
+                placeholder='Ví dụ: "top 5 trường tiểu học học phí rẻ nhất HCM"'
+                required
+              ></textarea>
+            </label>
+            <label class="field small">
+              <span>Số nguồn (1-60)</span>
+              <input id="target-sites" type="number" min="1" max="60" value="20" />
+            </label>
           </div>
 
-          <div class="actions field-full">
-            <button id="run-btn" type="submit">Phân tích ngay</button>
-            <p id="status" aria-live="polite"></p>
-          </div>
+          <button id="run-btn" type="submit" class="search-btn">🔎 TÌM KIẾM</button>
+          <p id="status" aria-live="polite"></p>
         </form>
       </section>
 
-      <section class="card" id="result-card">
+      <section class="result-card" id="result-card">
         <h2>Kết quả phân tích</h2>
         <p id="summary" class="summary">Chưa có dữ liệu.</p>
         <div class="table-wrap">
@@ -72,8 +52,8 @@
         <p id="assumptions" class="assumptions"></p>
       </section>
 
-      <section class="card">
-        <h2>Nguồn đã thu thập</h2>
+      <section class="result-card">
+        <h2>Nguồn tham khảo</h2>
         <ol id="sources" class="sources"></ol>
       </section>
     </main>
