@@ -591,6 +591,10 @@ function fallbackRowsFromSources(columns, topK, sources, query, queryType) {
       row[col.key] = "";
     }
 
+    if (queryType === "vehicle") {
+      enforceVehicleRowStrictness(row, columns, richText);
+    }
+
     rows.push(row);
   }
   return rows;
@@ -875,6 +879,43 @@ function humanizeKey(key) {
   return cleanString(String(key || "").replace(/_/g, " ")) || "Cột";
 }
 
+function enforceVehicleRowStrictness(row, columns, richText) {
+  const modelCol = columns.find((c) =>
+    /model|dong_xe|dong xe|xe/i.test(`${c.key} ${c.label}`)
+  );
+  const brandCol = columns.find((c) =>
+    /brand|hang_xe|hang xe/i.test(`${c.key} ${c.label}`)
+  );
+  const unitsCol = columns.find((c) =>
+    /units|so_luong|so luong|quantity/i.test(`${c.key} ${c.label}`)
+  );
+  const revenueCol = columns.find((c) =>
+    /revenue|doanh_thu|doanh thu/i.test(`${c.key} ${c.label}`)
+  );
+
+  if (modelCol) {
+    const model = cleanString(row[modelCol.key] || "");
+    if (!isValidVehicleModel(model)) {
+      row[modelCol.key] = "";
+      if (brandCol) row[brandCol.key] = "";
+    }
+  }
+
+  if (unitsCol) {
+    const units = cleanString(row[unitsCol.key] || "");
+    if (!isPlausibleUnitsSold(units, richText)) {
+      row[unitsCol.key] = "";
+    }
+  }
+
+  if (revenueCol) {
+    const revenue = cleanString(row[revenueCol.key] || "");
+    if (revenue && !looksLikeRevenueValue(revenue)) {
+      row[revenueCol.key] = "";
+    }
+  }
+}
+
 function extractMoney(text) {
   const t = cleanString(text);
   const patterns = [
@@ -907,22 +948,33 @@ function extractRevenueOnly(text) {
 
 function extractUnitsSold(text, queryType = "generic") {
   const t = cleanString(text);
-  const patterns = [
-    /(\d[\d.,]*)\s*(xe|chiếc|chiec|units?)\b/i,
-    /(doanh so|sales?|ban duoc|sold)[^0-9]{0,20}(\d[\d.,]*)/i
-  ];
-
-  for (const re of patterns) {
-    const m = t.match(re);
-    if (!m) continue;
-    const first = cleanString(m[1] || "");
-    const second = cleanString(m[2] || "");
-    const candidate = /\d/.test(second) ? second : first;
-    const numeric = toNumericInt(candidate);
-    if (!numeric) continue;
-    if (queryType === "vehicle" && isLikelyYear(candidate)) continue;
-    return String(candidate);
+  const direct = Array.from(t.matchAll(/(\d[\d.,]*)\s*(xe|chiếc|chiec|units?)\b/gi));
+  for (const m of direct) {
+    const raw = cleanString(m[1] || "");
+    const num = toNumericInt(raw);
+    if (!num) continue;
+    if (queryType === "vehicle") {
+      if (isLikelyYear(raw)) continue;
+      const idx = m.index || 0;
+      const context = t.slice(Math.max(0, idx - 18), idx + 18).toLowerCase();
+      if (/(top|xep hang|xếp hạng|hang|thứ)/i.test(context) && num <= 20) continue;
+      if (num <= 20) continue; // tránh lấy "top 10"
+      if (num > 3000000) continue;
+    }
+    return raw;
   }
+
+  const hinted = Array.from(
+    t.matchAll(/(?:doanh so|sales?|ban duoc|sold)[^0-9]{0,20}(\d[\d.,]*)/gi)
+  );
+  for (const m of hinted) {
+    const raw = cleanString(m[1] || "");
+    const num = toNumericInt(raw);
+    if (!num) continue;
+    if (queryType === "vehicle" && (isLikelyYear(raw) || num <= 20)) continue;
+    return raw;
+  }
+
   return "";
 }
 
@@ -978,23 +1030,7 @@ function extractVehicleEntity(text) {
     "ISUZU"
   ];
 
-  // Pattern: Brand + model token(s), ex: Mazda CX-5, Toyota Vios, VinFast VF 5.
-  for (const brand of brands) {
-    const re = new RegExp(
-      `\\b${brand}\\s+([A-Z0-9]{1,5}(?:-[A-Z0-9]{1,5})?(?:\\s+[A-Z0-9]{1,5}(?:-[A-Z0-9]{1,5})?)?)\\b`,
-      "i"
-    );
-    const m = cleaned.match(re);
-    if (!m) continue;
-    const modelPart = cleanString(m[1]).toUpperCase();
-    if (!modelPart || looksLikeNonModelToken(modelPart)) continue;
-    return {
-      brand,
-      model: `${brand} ${modelPart}`.replace(/\s+/g, " ").trim()
-    };
-  }
-
-  // Common standalone model hints.
+  // Common standalone model hints first (high precision).
   const known = [
     ["VINFAST", /(?:\bVF\s?3\b|\bVF\s?5\b|\bVF\s?6\b|\bVF\s?7\b|\bVF\s?8\b)/i],
     ["MAZDA", /\b(CX-3|CX-5|CX-8|MAZDA\s?2|MAZDA\s?3|MAZDA\s?6)\b/i],
@@ -1009,7 +1045,23 @@ function extractVehicleEntity(text) {
     const m = cleaned.match(re);
     if (!m) continue;
     const token = cleanString(m[1] || m[0]).toUpperCase();
+    if (!isValidVehicleModel(`${brand} ${token}`)) continue;
     return { brand, model: `${brand} ${token}`.replace(/\s+/g, " ").trim() };
+  }
+
+  // Generic pattern as fallback.
+  for (const brand of brands) {
+    const re = new RegExp(
+      `\\b${brand}\\s+([A-Z0-9]{2,10}(?:-[A-Z0-9]{1,6})?(?:\\s+[A-Z0-9]{2,10}(?:-[A-Z0-9]{1,6})?)?)\\b`,
+      "i"
+    );
+    const m = cleaned.match(re);
+    if (!m) continue;
+    const rawPart = cleanString(m[1]).toUpperCase();
+    const modelPart = cleanVehicleModelPart(rawPart);
+    const candidate = `${brand} ${modelPart}`.replace(/\s+/g, " ").trim();
+    if (!isValidVehicleModel(candidate)) continue;
+    return { brand, model: candidate };
   }
 
   return { brand: "", model: "" };
@@ -1025,7 +1077,9 @@ function looksLikeNonModelToken(value) {
     "chay",
     "nhat",
     "xe",
-    "oto"
+    "oto",
+    "th",
+    "nh"
   ]);
 }
 
@@ -1046,6 +1100,49 @@ function looksLikeRevenueValue(value) {
 function isLikelyYear(value) {
   const n = toNumericInt(value);
   return n >= 1900 && n <= 2099;
+}
+
+function cleanVehicleModelPart(part) {
+  let p = cleanString(part).toUpperCase();
+  p = p.replace(/\b(19|20)\d{2}\b/g, "").trim();
+  p = p.replace(/[^\w\s-]/g, " ").replace(/\s+/g, " ").trim();
+  return p;
+}
+
+function isValidVehicleModel(model) {
+  const m = cleanString(model).toUpperCase();
+  if (!m) return false;
+  const tokens = m.split(/\s+/);
+  if (tokens.length < 2) return false;
+
+  const modelTokens = tokens.slice(1).filter(Boolean);
+  if (modelTokens.length === 0) return false;
+
+  const bad = new Set(["V", "B", "X", "TH", "NH", "TOP", "XE", "OTO", "NAM", "THANG"]);
+  let hasMeaningful = false;
+  for (const tok of modelTokens) {
+    if (bad.has(tok)) return false;
+    if (isLikelyYear(tok)) return false;
+    if (tok.length >= 2 || /\d/.test(tok)) hasMeaningful = true;
+  }
+  if (!hasMeaningful) return false;
+  if (looksLikeArticleTitle(m)) return false;
+  return true;
+}
+
+function isPlausibleUnitsSold(units, richText = "") {
+  const raw = cleanString(units);
+  if (!raw) return false;
+  if (isLikelyYear(raw)) return false;
+
+  const n = toNumericInt(raw);
+  if (!n) return false;
+  if (n <= 20) return false;
+  if (n > 3000000) return false;
+
+  const near = stripVietnamese(richText).toLowerCase();
+  if (near.includes("top 10") && n === 10) return false;
+  return true;
 }
 
 function toNumericInt(value) {
