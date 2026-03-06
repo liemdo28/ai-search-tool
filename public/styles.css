@@ -1,13 +1,16 @@
 :root {
-  --bg-1: #f7fffb;
-  --bg-2: #eff8ff;
-  --ink: #0b1526;
-  --muted: #35506e;
-  --surface: rgba(255, 255, 255, 0.75);
-  --line: rgba(0, 185, 166, 0.35);
-  --neon-cyan: #00b6ff;
-  --neon-green: #0de489;
-  --neon-orange: #ff6f3c;
+  --bg-1: #070707;
+  --bg-2: #120909;
+  --bg-3: #190e0e;
+  --ink: #f4f4f4;
+  --muted: #c7b4b4;
+  --surface: rgba(18, 18, 18, 0.92);
+  --surface-2: rgba(26, 13, 13, 0.9);
+  --line: rgba(255, 59, 59, 0.38);
+  --line-soft: rgba(255, 106, 106, 0.2);
+  --neon-red: #ff2a2a;
+  --neon-red-soft: #ff6b6b;
+  --danger: #ff9595;
 }
 
 * {
@@ -17,11 +20,11 @@
 body {
   margin: 0;
   color: var(--ink);
-  font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+  font-family: "Segoe UI", "Helvetica Neue", sans-serif;
   background:
-    radial-gradient(circle at 12% 18%, rgba(13, 228, 137, 0.2), transparent 32%),
-    radial-gradient(circle at 86% 10%, rgba(0, 182, 255, 0.24), transparent 30%),
-    linear-gradient(140deg, var(--bg-1), var(--bg-2));
+    radial-gradient(circle at 9% 8%, rgba(255, 54, 54, 0.19), transparent 34%),
+    radial-gradient(circle at 88% 0%, rgba(255, 90, 90, 0.12), transparent 35%),
+    linear-gradient(130deg, var(--bg-1), var(--bg-2) 45%, var(--bg-3));
   min-height: 100vh;
 }
 
@@ -36,11 +39,11 @@ body {
   border: 1px solid var(--line);
   border-radius: 16px;
   padding: 18px;
-  background: var(--surface);
+  background: linear-gradient(180deg, var(--surface), var(--surface-2));
   backdrop-filter: blur(6px);
   box-shadow:
-    0 8px 32px rgba(13, 228, 137, 0.08),
-    0 6px 18px rgba(0, 182, 255, 0.12);
+    0 8px 30px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 90, 90, 0.15);
 }
 
 .hero h1 {
@@ -58,8 +61,8 @@ body {
   margin: 0 0 12px;
   padding: 6px 10px;
   border-radius: 999px;
-  color: #03231a;
-  background: linear-gradient(90deg, var(--neon-green), #8affcd);
+  color: #180505;
+  background: linear-gradient(90deg, var(--neon-red), #ff8e8e);
   font-weight: 700;
   font-size: 0.75rem;
   letter-spacing: 0.07em;
@@ -84,17 +87,22 @@ body {
 textarea,
 input {
   width: 100%;
-  border: 1px solid rgba(0, 182, 255, 0.35);
+  border: 1px solid var(--line-soft);
   border-radius: 12px;
   padding: 11px 12px;
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.95);
+  background: rgba(13, 13, 13, 0.9);
 }
 
 textarea:focus,
 input:focus {
-  outline: 2px solid rgba(0, 182, 255, 0.45);
+  outline: 2px solid rgba(255, 83, 83, 0.45);
   border-color: transparent;
+}
+
+textarea::placeholder,
+input::placeholder {
+  color: #7f6a6a;
 }
 
 .chips {
@@ -109,8 +117,8 @@ input:focus {
   gap: 6px;
   padding: 8px 11px;
   border-radius: 999px;
-  border: 1px solid rgba(13, 228, 137, 0.5);
-  background: rgba(13, 228, 137, 0.08);
+  border: 1px solid rgba(255, 107, 107, 0.5);
+  background: rgba(255, 42, 42, 0.08);
   font-size: 0.92rem;
 }
 
@@ -126,15 +134,10 @@ button {
   border-radius: 12px;
   padding: 12px 18px;
   font-weight: 700;
-  color: #062223;
-  background: linear-gradient(
-    95deg,
-    var(--neon-cyan),
-    var(--neon-green),
-    #9fffd6
-  );
+  color: #1a0505;
+  background: linear-gradient(95deg, #ff1f1f, #ff5b5b, #ff8f8f);
   cursor: pointer;
-  box-shadow: 0 6px 16px rgba(0, 182, 255, 0.3);
+  box-shadow: 0 6px 18px rgba(255, 42, 42, 0.38);
 }
 
 button:hover {
@@ -147,7 +150,7 @@ button:hover {
 }
 
 #status.error {
-  color: #be2a00;
+  color: var(--danger);
 }
 
 h2 {
@@ -156,7 +159,7 @@ h2 {
 
 .summary,
 .assumptions {
-  color: #17375c;
+  color: #f0d8d8;
 }
 
 .table-wrap {
@@ -172,23 +175,27 @@ table {
 th,
 td {
   padding: 9px 10px;
-  border-bottom: 1px solid rgba(0, 182, 255, 0.2);
+  border-bottom: 1px solid var(--line-soft);
   text-align: left;
   vertical-align: top;
 }
 
 th {
-  color: #0a3150;
-  background: rgba(0, 182, 255, 0.12);
+  color: #ffd9d9;
+  background: rgba(255, 46, 46, 0.16);
 }
 
 a {
-  color: #045ea3;
+  color: #ff8f8f;
+}
+
+a:hover {
+  color: #ffc0c0;
 }
 
 .empty {
   text-align: center;
-  color: #5d7897;
+  color: #a99393;
 }
 
 .sources {
@@ -205,8 +212,8 @@ a {
   padding: 2px 6px;
   margin-right: 6px;
   border-radius: 999px;
-  background: rgba(255, 111, 60, 0.16);
-  color: #8f2e08;
+  background: rgba(255, 42, 42, 0.2);
+  color: #ffd2d2;
 }
 
 @media (max-width: 780px) {
@@ -214,4 +221,3 @@ a {
     grid-template-columns: 1fr;
   }
 }
-

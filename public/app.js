@@ -3,7 +3,16 @@ const statusEl = document.getElementById("status");
 const summaryEl = document.getElementById("summary");
 const assumptionsEl = document.getElementById("assumptions");
 const sourcesEl = document.getElementById("sources");
+const tableHead = document.querySelector("#result-table thead");
 const tableBody = document.querySelector("#result-table tbody");
+let emptyColspan = 1;
+
+renderHeader([
+  { key: "item", label: "Đối tượng", type: "text" },
+  { key: "source_url", label: "Link", type: "url" },
+  { key: "notes", label: "Ghi chú", type: "text" }
+]);
+renderEmpty("Nhập từ khóa để bắt đầu.");
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -70,7 +79,7 @@ form.addEventListener("submit", async (event) => {
     assumptionsEl.textContent =
       assumptions.length > 0
         ? `Lưu ý: ${assumptions.join(" | ")}`
-        : "Lưu ý: Nên kiểm tra lại các con số học phí trên trang chính thức.";
+        : "Lưu ý: Nên kiểm tra lại số liệu trên website chính thức.";
 
     updateStatus("Hoàn tất.");
   } catch (error) {
@@ -85,28 +94,31 @@ form.addEventListener("submit", async (event) => {
 });
 
 function renderTable(rows) {
-  if (!Array.isArray(rows) || rows.length === 0) {
+  const table = normalizeTablePayload(rows);
+  const columns = table.columns;
+  const dataRows = table.rows;
+
+  renderHeader(columns);
+
+  if (!Array.isArray(dataRows) || dataRows.length === 0) {
     renderEmpty("Không có dòng dữ liệu phù hợp.");
     return;
   }
 
-  tableBody.innerHTML = rows
-    .map((row) => {
-      const url = escapeHtml(row.source_url || "");
-      return `
-      <tr>
-        <td>${escapeHtml(String(row.rank ?? ""))}</td>
-        <td>${escapeHtml(row.name || "")}</td>
-        <td>${escapeHtml(row.address || "")}</td>
-        <td>${escapeHtml(row.tuition || "")}</td>
-        <td>${
-          url
-            ? `<a href="${url}" target="_blank" rel="noopener noreferrer">Mở</a>`
-            : ""
-        }</td>
-        <td>${escapeHtml(row.notes || "")}</td>
-      </tr>
-    `;
+  tableBody.innerHTML = dataRows
+    .map((row, idx) => {
+      const cells = columns
+        .map((col) => {
+          const raw = pickCellValue(row, col);
+          const value = escapeHtml(raw);
+          if (col.type === "url" && raw) {
+            return `<td><a href="${value}" target="_blank" rel="noopener noreferrer">Mở nguồn</a></td>`;
+          }
+          return `<td>${value || ""}</td>`;
+        })
+        .join("");
+
+      return `<tr><td>${idx + 1}</td>${cells}</tr>`;
     })
     .join("");
 }
@@ -129,9 +141,103 @@ function renderSources(sources) {
 }
 
 function renderEmpty(message) {
-  tableBody.innerHTML = `<tr><td colspan="6" class="empty">${escapeHtml(
+  tableBody.innerHTML = `<tr><td colspan="${emptyColspan}" class="empty">${escapeHtml(
     message
   )}</td></tr>`;
+}
+
+function renderHeader(columns) {
+  const heads = columns
+    .map((col) => `<th>${escapeHtml(col.label || col.key || "Cột")}</th>`)
+    .join("");
+  tableHead.innerHTML = `<tr><th>#</th>${heads}</tr>`;
+  emptyColspan = columns.length + 1;
+}
+
+function normalizeTablePayload(payload) {
+  if (Array.isArray(payload)) {
+    // Backward compatibility for old response format.
+    const columns = [
+      { key: "name", label: "Tên", type: "text" },
+      { key: "address", label: "Địa chỉ", type: "text" },
+      { key: "tuition", label: "Học phí", type: "text" },
+      { key: "source_url", label: "Link", type: "url" },
+      { key: "notes", label: "Ghi chú", type: "text" }
+    ];
+    return { columns, rows: payload };
+  }
+
+  const candidateColumns = Array.isArray(payload?.columns) ? payload.columns : [];
+  const candidateRows = Array.isArray(payload?.rows) ? payload.rows : [];
+  const columns = normalizeColumns(candidateColumns);
+  return { columns, rows: candidateRows };
+}
+
+function normalizeColumns(columns) {
+  const cleaned = [];
+  const used = new Set();
+
+  for (const col of columns) {
+    if (!col || typeof col !== "object") continue;
+    const key = toKey(col.key || col.label);
+    if (!key || used.has(key)) continue;
+    used.add(key);
+
+    const label = String(col.label || key).trim();
+    let type = String(col.type || "").trim().toLowerCase();
+    if (type !== "url") type = isUrlKey(key, label) ? "url" : "text";
+
+    cleaned.push({ key, label, type });
+  }
+
+  if (cleaned.length === 0) {
+    cleaned.push(
+      { key: "item", label: "Đối tượng", type: "text" },
+      { key: "source_url", label: "Link", type: "url" },
+      { key: "notes", label: "Ghi chú", type: "text" }
+    );
+  }
+
+  if (!cleaned.some((c) => c.type === "url")) {
+    cleaned.push({ key: "source_url", label: "Link", type: "url" });
+  }
+  if (!cleaned.some((c) => /note|ghi/.test(`${c.key} ${c.label}`.toLowerCase()))) {
+    cleaned.push({ key: "notes", label: "Ghi chú", type: "text" });
+  }
+
+  return cleaned;
+}
+
+function pickCellValue(row, col) {
+  if (!row || typeof row !== "object") return "";
+  const keyValue = row[col.key];
+  if (keyValue != null) return String(keyValue).trim();
+
+  const labelValue = row[col.label];
+  if (labelValue != null) return String(labelValue).trim();
+
+  if (col.type === "url") {
+    const url = row.source_url ?? row.link ?? row.url;
+    return url != null ? String(url).trim() : "";
+  }
+
+  return "";
+}
+
+function toKey(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function isUrlKey(key, label) {
+  const t = `${key} ${label}`.toLowerCase();
+  return t.includes("url") || t.includes("link");
 }
 
 function updateStatus(message, isError = false) {
@@ -147,4 +253,3 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 }
-
