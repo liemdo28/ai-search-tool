@@ -519,6 +519,7 @@ function buildFallbackTable({
       : queryType === "school"
       ? [
           { key: "school_name", label: "Tên trường", type: "text" },
+          { key: "address", label: "Địa chỉ", type: "text" },
           { key: "evidence", label: "Thông tin trích từ nguồn", type: "text" },
           { key: "source_url", label: "Link", type: "url" },
           { key: "notes", label: "Ghi chú", type: "text" }
@@ -537,7 +538,8 @@ function buildFallbackTable({
 
 function fallbackRowsFromSources(columns, topK, sources, query, queryType) {
   const rows = [];
-  for (const src of sources.slice(0, topK)) {
+  const seenSchoolKeys = new Set();
+  for (const src of sources) {
     const row = {};
     const richText = `${src.title}\n${src.snippet}\n${src.content_excerpt}`.trim();
     const vehicle = extractVehicleEntity(richText);
@@ -614,10 +616,17 @@ function fallbackRowsFromSources(columns, topK, sources, query, queryType) {
       enforceVehicleRowStrictness(row, columns, richText);
     }
     if (queryType === "school") {
-      enforceSchoolRowStrictness(row, columns);
+      enforceSchoolRowStrictness(row, columns, richText);
+      const school =
+        cleanString(row.school_name || row.ten_truong || row["tên trường"] || "");
+      if (!school) continue;
+      const key = schoolDedupKey(school);
+      if (!key || seenSchoolKeys.has(key)) continue;
+      seenSchoolKeys.add(key);
     }
 
     rows.push(row);
+    if (rows.length >= topK) break;
   }
   return rows;
 }
@@ -1031,11 +1040,19 @@ function extractUnitsSold(text, queryType = "generic") {
 
 function extractAddress(text) {
   const t = cleanString(text);
-  const m =
-    t.match(/(dia chi|địa chỉ)\s*[:\-]?\s*([^.;|]{8,120})/i) ||
-    t.match(/(\d{1,4}[^,;]{3,80}(quan|q\.|district|huyen|phuong)[^,;]{0,60})/i);
-  if (!m) return "";
-  const out = cleanString(m[2] || m[1] || "");
+  const patterns = [
+    /(dia chi|địa chỉ)\s*[:\-]?\s*([^.;|]{8,140})/i,
+    /(\d{1,4}[^,;|]{3,120}(quan|q\.|district|huyen|phuong)[^,;|]{0,80})/i,
+    /((?:phuong|phường)\s*[^,;|]{2,40}(?:\s*[-,]\s*(?:quan|quận|q\.)\s*[^,;|]{1,20})?(?:\s*[-,]\s*(?:tp\.?\s*hcm|tp\.?\s*ho chi minh|ho chi minh))?)/i
+  ];
+  let out = "";
+  for (const re of patterns) {
+    const m = t.match(re);
+    if (!m) continue;
+    out = cleanString(m[2] || m[1] || "");
+    if (out) break;
+  }
+  if (!out) return "";
   if (!looksLikeAddressValue(out)) return "";
   return out;
 }
@@ -1201,21 +1218,23 @@ function isPlausibleUnitsSold(units, richText = "") {
 function extractSchoolName(title, snippet = "", content = "") {
   const text = `${title}\n${snippet}\n${content}`;
   const patterns = [
-    /(truong\s+(?:tieu hoc|mau giao|mam non|thcs|thpt)[^,.;|\n]{2,80})/i,
-    /(trường\s+(?:tiểu học|mẫu giáo|mầm non|thcs|thpt)[^,.;|\n]{2,80})/i
+    /(trường\s+(?:tiểu học|mẫu giáo|mầm non|thcs|thpt|quốc tế)[^,.;|\n]{2,100})/gi,
+    /(truong\s+(?:tieu hoc|mau giao|mam non|thcs|thpt|quoc te)[^,.;|\n]{2,100})/gi
   ];
+
   for (const re of patterns) {
-    const m = text.match(re);
-    if (!m) continue;
-    const candidate = cleanString(m[1]);
-    if (looksLikeSchoolName(candidate)) return candidate;
+    const matches = Array.from(text.matchAll(re));
+    for (const m of matches) {
+      const candidate = cleanSchoolNameCandidate(cleanString(m[1] || m[0] || ""));
+      if (looksLikeSchoolName(candidate)) return candidate;
+    }
   }
 
-  const base = smartNameFromTitle(title, "");
+  const base = cleanSchoolNameCandidate(smartNameFromTitle(title, ""));
   return looksLikeSchoolName(base) ? base : "";
 }
 
-function enforceSchoolRowStrictness(row, columns) {
+function enforceSchoolRowStrictness(row, columns, richText = "") {
   const schoolCol = columns.find((c) =>
     /school|ten_truong|tên trường|truong/i.test(`${c.key} ${c.label}`)
   );
@@ -1227,9 +1246,11 @@ function enforceSchoolRowStrictness(row, columns) {
   );
 
   if (schoolCol) {
-    const school = cleanString(row[schoolCol.key] || "");
+    const school = cleanSchoolNameCandidate(cleanString(row[schoolCol.key] || ""));
     if (school && !looksLikeSchoolName(school)) {
       row[schoolCol.key] = "";
+    } else {
+      row[schoolCol.key] = school;
     }
   }
   if (tuitionCol) {
@@ -1239,16 +1260,38 @@ function enforceSchoolRowStrictness(row, columns) {
     }
   }
   if (addressCol) {
-    const address = cleanString(row[addressCol.key] || "");
+    let address = cleanString(row[addressCol.key] || "");
+    if (!address && richText) {
+      address = extractAddress(richText);
+    }
     if (address && !looksLikeAddressValue(address)) {
       row[addressCol.key] = "";
+    } else {
+      row[addressCol.key] = address;
     }
   }
 }
 
 function looksLikeSchoolName(value) {
   const v = stripVietnamese(value).toLowerCase();
-  return hasAny(v, ["truong", "thcs", "thpt", "mam non", "tieu hoc"]);
+  if (!v) return false;
+  if (!hasAny(v, ["truong", "thcs", "thpt", "mam non", "tieu hoc"])) return false;
+  if (
+    hasAny(v, [
+      "top ",
+      "tot nhat",
+      "moi nhat",
+      "xep hang",
+      "danh sach",
+      "tuyen sinh",
+      "tai duong",
+      "tai cau"
+    ])
+  ) {
+    return false;
+  }
+  const tokenCount = v.split(/\s+/).filter(Boolean).length;
+  return tokenCount >= 3;
 }
 
 function looksLikeTuitionValue(value) {
@@ -1259,7 +1302,34 @@ function looksLikeTuitionValue(value) {
 function looksLikeAddressValue(value) {
   const v = stripVietnamese(value).toLowerCase();
   if (v.length < 8) return false;
-  return hasAny(v, ["quan", "q.", "phuong", "duong", "tp", "hcm", "ho chi minh", "district"]);
+  return hasAny(v, [
+    "quan",
+    "q.",
+    "phuong",
+    "duong",
+    "tp",
+    "hcm",
+    "ho chi minh",
+    "district",
+    "ward"
+  ]);
+}
+
+function cleanSchoolNameCandidate(value) {
+  let v = cleanString(value);
+  if (!v) return "";
+  v = v.replace(/\s*[-|–—]\s*(phường|phuong|quận|quan|tp|tp\.|hcm|ho chi minh).*/i, "");
+  v = v.replace(/\s{2,}/g, " ").trim();
+  return v;
+}
+
+function schoolDedupKey(value) {
+  const v = stripVietnamese(cleanSchoolNameCandidate(value)).toLowerCase();
+  return v
+    .replace(/\b(truong|tieu|hoc|mam|non|thcs|thpt|quoc|te)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 function toFriendlyAiError(raw) {
